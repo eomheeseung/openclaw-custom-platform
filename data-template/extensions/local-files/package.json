@@ -1,0 +1,14 @@
+{
+  "name": "@openclaw/local-files",
+  "version": "1.0.0",
+  "description": "Access local files on desktop client via WebSocket relay",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

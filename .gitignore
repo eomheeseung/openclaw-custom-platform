@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+*/node_modules/
+**/node_modules/
+
+# Build output
+dist/
+build/
+*/dist/
+**/dist/
+*.tgz
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files / secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+auth/
+**/google-token.json
+**/oauth_tokens.json
+**/integrations.json
+
+# User data (per-container, runtime-generated)
+data/
+shared/user*/
+!shared/user01/custom-ui/  # 단, custom-ui 소스는 별도 관리
+
+# OpenClaw upstream (clone되는 폴더)
+repo/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.bak.*
+*.old
+custom-ui-backup-*/
+
+# Build artifacts
+custom-ui/assets/*.js
+custom-ui/assets/*.js.map
+custom-ui/assets/*.css
+!custom-ui/src/**
+
+# Test outputs
+coverage/
+*.lcov

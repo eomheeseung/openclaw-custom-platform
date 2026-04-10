@@ -1,0 +1,26 @@
+{
+  "id": "local-files",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 60000
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable Local File Tools"
+    },
+    "timeoutMs": {
+      "label": "Request Timeout (ms)",
+      "advanced": true
+    }
+  }
+}

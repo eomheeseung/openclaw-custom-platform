@@ -1,0 +1,47 @@
+#!/bin/bash
+# dooray wrapper - Dooray API 호출 (userNN 자동 추출)
+NN=$(echo $OPENCLAW_GATEWAY_TOKEN | grep -oP "user\K\d+")
+[ -z "$NN" ] && NN="01"
+API="http://172.18.0.1:18799/api/dooray"
+
+case "$1" in
+  "projects"|"project")
+    curl -s "${API}/projects?userNN=${NN}"
+    ;;
+  "tasks"|"task-list")
+    shift
+    PROJECT_ID="$1"
+    SIZE="${2:-20}"
+    STATUS="${3:-}"
+    MEMBER="${4:-}"
+    CC="${5:-}"
+    URL="${API}/tasks?userNN=${NN}&projectId=${PROJECT_ID}&size=${SIZE}"
+    [ -n "$STATUS" ] && URL="${URL}&status=${STATUS}"
+    [ -n "$MEMBER" ] && URL="${URL}&memberIds=${MEMBER}"
+    [ -n "$CC" ] && URL="${URL}&ccMemberIds=${CC}"
+    curl -s "$URL"
+    ;;
+  "task")
+    shift
+    PROJECT_ID="$1"
+    TASK_ID="$2"
+    curl -s "${API}/task?userNN=${NN}&projectId=${PROJECT_ID}&taskId=${TASK_ID}"
+    ;;
+  "member")
+    shift
+    QUERY="$*"
+    # 이메일이면 email 파라미터, 아니면 name 파라미터
+    if echo "$QUERY" | grep -q "@"; then
+      curl -s "${API}/member?userNN=${NN}&email=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$QUERY'))")"
+    else
+      curl -s "${API}/member?userNN=${NN}&name=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$QUERY'))")"
+    fi
+    ;;
+  *)
+    echo '사용법:'
+    echo '  dooray projects                          — 프로젝트 목록'
+    echo '  dooray tasks 프로젝트ID [size] [status] [memberIds] [ccMemberIds]  — 업무 목록'
+    echo '  dooray task 프로젝트ID 업무ID            — 업무 상세'
+    echo '  dooray member 이름또는이메일             — 멤버 조회'
+    ;;
+esac

@@ -1,0 +1,17 @@
+{
+  "id": "gmail",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable Gmail Tools"
+    }
+  }
+}

@@ -1,0 +1,728 @@
+services:
+  # === Nginx 리버스 프록시 ===
+  nginx:
+    image: nginx:alpine
+    container_name: openclaw-nginx
+    networks:
+      default:
+        ipv4_address: 172.18.0.100
+    ports:
+      - "80:80"
+      - "18001:18001"
+      - "18002:18002"
+      - "18003:18003"
+      - "18004:18004"
+      - "18005:18005"
+      - "18006:18006"
+      - "18007:18007"
+      - "18008:18008"
+      - "18009:18009"
+      - "18010:18010"
+      - "18011:18011"
+      - "18012:18012"
+      - "18013:18013"
+      - "18014:18014"
+      - "6080:6080"
+      - "6081:6081"
+      - "6082:6082"
+      - "6083:6083"
+      - "6084:6084"
+      - "6085:6085"
+      - "6086:6086"
+      - "6087:6087"
+      - "6088:6088"
+      - "6089:6089"
+      - "6090:6090"
+      - "6091:6091"
+      - "6092:6092"
+      - "6093:6093"
+      - "3000:3000"
+    volumes:
+      - /opt/openclaw/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - /opt/openclaw/custom-ui:/usr/share/nginx/custom-ui:ro
+    depends_on:
+      - user01
+      - user02
+      - user03
+      - user04
+      - user05
+      - user06
+      - user07
+      - user08
+      - user09
+      - user10
+      - user11
+      - user12
+      - user13
+      - user14
+    restart: unless-stopped
+
+  # === OpenClaw 컨테이너 ===
+  user01:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user01
+    networks:
+      default:
+        ipv4_address: 172.18.0.11
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user01
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user01:/home/node/.openclaw
+      - /opt/openclaw/shared/user01:/home/node/documents
+      - /mnt/gdrive:/home/node/gdrive
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user02:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user02
+    networks:
+      default:
+        ipv4_address: 172.18.0.12
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user02
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user02:/home/node/.openclaw
+      - /opt/openclaw/shared/user02:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user03:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user03
+    networks:
+      default:
+        ipv4_address: 172.18.0.13
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user03
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user03:/home/node/.openclaw
+      - /opt/openclaw/shared/user03:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user04:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user04
+    networks:
+      default:
+        ipv4_address: 172.18.0.14
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user04
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user04:/home/node/.openclaw
+      - /opt/openclaw/shared/user04:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user05:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user05
+    networks:
+      default:
+        ipv4_address: 172.18.0.15
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user05
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user05:/home/node/.openclaw
+      - /opt/openclaw/shared/user05:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user06:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user06
+    networks:
+      default:
+        ipv4_address: 172.18.0.16
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user06
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user06:/home/node/.openclaw
+      - /opt/openclaw/shared/user06:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user07:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user07
+    networks:
+      default:
+        ipv4_address: 172.18.0.17
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user07
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user07:/home/node/.openclaw
+      - /opt/openclaw/shared/user07:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user08:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user08
+    networks:
+      default:
+        ipv4_address: 172.18.0.18
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user08
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user08:/home/node/.openclaw
+      - /opt/openclaw/shared/user08:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user09:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user09
+    networks:
+      default:
+        ipv4_address: 172.18.0.19
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user09
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user09:/home/node/.openclaw
+      - /opt/openclaw/shared/user09:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user10:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user10
+    networks:
+      default:
+        ipv4_address: 172.18.0.20
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user10
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user10:/home/node/.openclaw
+      - /opt/openclaw/shared/user10:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user11:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user11
+    networks:
+      default:
+        ipv4_address: 172.18.0.21
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user11
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user11:/home/node/.openclaw
+      - /opt/openclaw/shared/user11:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user12:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user12
+    networks:
+      default:
+        ipv4_address: 172.18.0.22
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user12
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user12:/home/node/.openclaw
+      - /opt/openclaw/shared/user12:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user13:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user13
+    networks:
+      default:
+        ipv4_address: 172.18.0.23
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user13
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user13:/home/node/.openclaw
+      - /opt/openclaw/shared/user13:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user14:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user14
+    networks:
+      default:
+        ipv4_address: 172.18.0.24
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user14
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user14:/home/node/.openclaw
+      - /opt/openclaw/shared/user14:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  user15:
+    image: openclaw-gateway-browser
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: "1"
+    container_name: openclaw-user15
+    networks:
+      default:
+        ipv4_address: 172.18.0.25
+    expose:
+      - "18789"
+      - "6080"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_GATEWAY_BIND=0.0.0.0
+      - TZ=Asia/Seoul
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=tc-user15
+      - DISPLAY=:99
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - /opt/openclaw/data/user15:/home/node/.openclaw
+      - /opt/openclaw/shared/user15:/home/node/documents
+      - /opt/openclaw/bootstrap/BOOTSTRAP.md:/home/node/BOOTSTRAP.md:ro
+      - /opt/openclaw/scripts/bin:/opt/scripts:ro
+      - /opt/openclaw/scripts/bin/dooray:/usr/local/bin/dooray:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3g
+        reservations:
+          memory: 1.5g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1

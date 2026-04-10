@@ -1,0 +1,17 @@
+{
+  "id": "dooray",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable Dooray Tools"
+    }
+  }
+}
