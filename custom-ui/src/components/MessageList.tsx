@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeRaw from 'rehype-raw';
 import { User, Bot, Loader2, Copy, Download, Check } from 'lucide-react';
-import type { Message } from '../types';
+import type { Message, Agent } from '../types';
 
 /* 사용자 메시지에서 [파일: xxx] 라벨 다음의 inline 텍스트를 라벨만 남기고 제거 */
 function trimFileContent(content: string): string {
@@ -40,9 +40,10 @@ function useCopy() {
 
 interface MessageListProps {
   messages: Message[];
+  agents?: Agent[];
 }
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, agents = [] }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -174,27 +175,45 @@ export function MessageList({ messages }: MessageListProps) {
             .replace(/\n?Successfully wrote \d+ bytes to [^\n]*/g, '')
             .trim() || (message.isLoading ? '생각 중...' : '');
 
+          const mentionAgent = message.mentionAgentId ? agents.find(a => a.id === message.mentionAgentId) : undefined;
+          const isMention = !!message.mentionAgentId;
+          const mentionLabel = mentionAgent ? `${mentionAgent.emoji || '🤖'} ${mentionAgent.name}` : message.mentionAgentId;
+
           return (
             <div key={message.id}>
               <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
                 {/* Avatar */}
                 <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${
-                  isUser ? 'bg-accent' : 'bg-card border border-border-color shadow-sm'
+                  isUser ? 'bg-accent' : isMention ? 'bg-purple-50 border border-purple-300 shadow-sm' : 'bg-card border border-border-color shadow-sm'
                 }`}>
                   {isUser ? (
                     <User className="w-5 h-5 text-white" />
+                  ) : isMention && mentionAgent?.emoji ? (
+                    <span className="text-lg">{mentionAgent.emoji}</span>
                   ) : (
-                    <Bot className="w-5 h-5 text-accent" />
+                    <Bot className={`w-5 h-5 ${isMention ? 'text-purple-600' : 'text-accent'}`} />
                   )}
                 </div>
 
                 {/* Message content */}
                 <div className={`flex-1 max-w-[75%] ${isUser ? 'text-right' : ''}`}>
+                  {/* Mention badge */}
+                  {isMention && (
+                    <div className={`mb-1 flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-100 border border-purple-300 text-purple-700">
+                        {isUser ? '@ ' : '↳ '}{mentionLabel}
+                      </span>
+                    </div>
+                  )}
                   {/* Bubble */}
                   <div className={`inline-block text-left rounded-2xl ${
                     isUser
-                      ? 'bg-accent text-white px-4 py-3 rounded-tr-md shadow-md shadow-accent/15'
-                      : 'bg-white border border-black/[0.05] px-4 py-3 rounded-tl-md shadow-sm'
+                      ? isMention
+                        ? 'bg-purple-600 text-white px-4 py-3 rounded-tr-md shadow-md shadow-purple-500/20'
+                        : 'bg-accent text-white px-4 py-3 rounded-tr-md shadow-md shadow-accent/15'
+                      : isMention
+                        ? 'bg-purple-50/60 border border-purple-200 border-l-4 border-l-purple-500 px-4 py-3 rounded-tl-md shadow-sm'
+                        : 'bg-white border border-black/[0.05] px-4 py-3 rounded-tl-md shadow-sm'
                   }`}>
                     {!isUser ? (
                       <div className="markdown prose max-w-none text-text-primary">

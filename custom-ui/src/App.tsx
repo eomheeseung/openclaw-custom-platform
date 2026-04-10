@@ -99,17 +99,27 @@ function App() {
     setSelectedAgent(agent); setCurrentView('chat'); createSession(agent.id);
   }, [createSession]);
 
+  const resolveAgentFromSessionKey = useCallback((sessionKey: string | undefined): Agent | null => {
+    if (!sessionKey) return null;
+    const m = sessionKey.match(/^agent:([^:]+):/);
+    if (!m) return null;
+    return agents.find(a => a.id === m[1]) || null;
+  }, [agents]);
+
   const handleSelectSession = useCallback((session: Session) => {
-    setSelectedAgent(agents.find(a => a.id === session.agentId) || null);
+    const byId = session.agentId ? agents.find(a => a.id === session.agentId) : null;
+    const byKey = byId || resolveAgentFromSessionKey(session.sessionKey);
+    setSelectedAgent(byKey);
     switchSession(session.sessionKey); setCurrentView('chat');
-  }, [agents, switchSession]);
+  }, [agents, switchSession, resolveAgentFromSessionKey]);
 
   const handleCreateSession = useCallback(() => { createSession(selectedAgent?.id); }, [createSession, selectedAgent]);
 
   if (!token) return <LoginScreen onLogin={handleLogin} />;
 
-  const currentAgentData = selectedAgent || (currentSession ? agents.find(a =>
-    sessions.find(s => s.sessionKey === currentSession)?.agentId === a.id
+  const currentAgentData = selectedAgent || (currentSession ? (
+    agents.find(a => sessions.find(s => s.sessionKey === currentSession)?.agentId === a.id)
+    || resolveAgentFromSessionKey(currentSession)
   ) : null);
 
   const viewLabel = dockItems.find(d => d.key === currentView)?.label || '';
@@ -246,8 +256,8 @@ function App() {
             />
           ) : currentView === 'chat' ? (
             <>
-              <MessageList messages={messages} />
-              <ChatInput onSendMessage={sendMessage} onStop={stopChat} disabled={!connectionStatus.connected} isLoading={isLoading} agentName={currentAgentData?.name} model={currentAgentData?.model} />
+              <MessageList messages={messages} agents={agents} />
+              <ChatInput onSendMessage={sendMessage} onStop={stopChat} disabled={!connectionStatus.connected} isLoading={isLoading} agentName={currentAgentData?.name} model={currentAgentData?.model} agents={agents} currentAgentId={currentAgentData?.id} />
             </>
           ) : currentView === 'agents' ? (
             <AgentManager sendRequest={sendRequest} onAgentsChanged={fetchAgents} token={token} />

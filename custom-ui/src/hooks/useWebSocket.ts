@@ -50,8 +50,48 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   const mainRunId = useRef<string | null>(null); // chat.send에서 시작된 메인 runId
   const knownRunIds = useRef<Set<string>>(new Set()); // 메인 세션의 runId 목록
   const subagentReturned = useRef<boolean>(false); // 서브에이전트 종료 → 비서로 전달된 상태
+  const mentionSessionKeys = useRef<Map<string, string>>(new Map()); // mention sessionKey → target agentId
+  const mentionParentByKey = useRef<Map<string, string>>(new Map()); // mention sessionKey → parent sessionKey
+  const agentsRef = useRef<Agent[]>([]);
   const tokenRef = useRef(token);
   tokenRef.current = token;
+
+  // 레거시 session-title:* localStorage 캐시 일회성 정리
+  useEffect(() => {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('session-title:')) keysToRemove.push(k);
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch {}
+  }, []);
+
+  // 멘션 로그 localStorage 헬퍼 (부모 세션별로 멘션 주고받기 저장)
+  type MentionLogEntry = {
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    ts: number;
+    mentionAgentId: string;
+  };
+  const mentionLogKey = (parentKey: string) => `mention-log:${tokenRef.current}:${parentKey}`;
+  const readMentionLog = (parentKey: string): MentionLogEntry[] => {
+    try {
+      const raw = localStorage.getItem(mentionLogKey(parentKey));
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  };
+  const appendMentionLog = (parentKey: string, entry: MentionLogEntry) => {
+    try {
+      const log = readMentionLog(parentKey);
+      log.push(entry);
+      localStorage.setItem(mentionLogKey(parentKey), JSON.stringify(log));
+    } catch {}
+  };
 
   // Stable sendRequest — no deps, uses ws ref directly
   const sendRequest = useCallback((method: string, params: Record<string, unknown> = {}): Promise<ProtocolFrame> => {
@@ -92,6 +132,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
         };
       });
       setAgents(agentList);
+      agentsRef.current = agentList;
     } catch (err) {
       console.error('Failed to fetch agents:', err);
     }
@@ -111,10 +152,15 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           key: string;
           agentId?: string;
           label?: string;
+          updatedAt?: number;
+          startedAt?: number;
+          endedAt?: number;
           lastMessageAt?: number;
           messageCount?: number;
           derivedTitle?: string;
         }>).map(s => {
+          // 서버 응답의 실제 필드명: updatedAt (startedAt/endedAt도 있음)
+          const lastTs = s.updatedAt ?? s.endedAt ?? s.startedAt ?? s.lastMessageAt;
           // 세션 이름 정리: derivedTitle > 정리된 label > 날짜 fallback
           // 노이즈 라벨 판별 (사용자에게 보이면 안 되는 패턴)
           const isNoise = (s: string) => !s
@@ -125,31 +171,30 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
             || /^[a-zA-Z0-9_-]{6,16}(\s*\(.*\))?$/i.test(s);
 
           const rawLabel = (s.label || '').trim();
-          const dt = s.derivedTitle || '';
-          // localStorage에서 첫 사용자 메시지 캐시 조회
-          let cachedTitle = '';
-          try { cachedTitle = localStorage.getItem(`session-title:${s.key}`) || ''; } catch {}
+          const dt = (s.derivedTitle || '').trim();
           const fmtDate = (ts?: number) => {
-            const d = ts ? new Date(ts) : new Date();
+            if (!ts) return '';
+            const d = new Date(ts);
             return `${d.getMonth() + 1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
           };
 
+          // 서버 derivedTitle 우선, 그 다음 서버 label, 마지막 날짜 fallback (localStorage 캐시 제거)
           let displayLabel = '';
-          if (cachedTitle) {
-            displayLabel = cachedTitle;
-          } else if (dt && !isNoise(dt)) {
+          if (dt && !isNoise(dt)) {
             displayLabel = dt;
           } else if (!isNoise(rawLabel)) {
             displayLabel = rawLabel;
+          } else if (lastTs) {
+            displayLabel = `${fmtDate(lastTs)} 대화`;
           } else {
-            // 무조건 날짜 fallback
-            displayLabel = `${fmtDate(s.lastMessageAt)} 대화`;
+            const parts = s.key.split(':');
+            displayLabel = `대화 ${parts[parts.length - 1] || ''}`.trim();
           }
           return {
             sessionKey: s.key,
             agentId: s.agentId,
             label: displayLabel,
-            lastMessageAt: s.lastMessageAt ? new Date(s.lastMessageAt).toISOString() : undefined,
+            lastMessageAt: lastTs ? new Date(lastTs).toISOString() : undefined,
             messageCount: s.messageCount,
             derivedTitle: s.derivedTitle,
           };
@@ -223,7 +268,9 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     if (state === 'delta') {
       // sessionKey 기반 필터링: payload의 sessionKey가 현재 세션과 다르면 서브에이전트
       const evtSessionKey = payload.sessionKey as string | undefined;
-      if (evtSessionKey && currentSession && evtSessionKey !== currentSession) {
+      const mentionAgentId = evtSessionKey ? mentionSessionKeys.current.get(evtSessionKey) : undefined;
+      const isMention = !!mentionAgentId;
+      if (!isMention && evtSessionKey && currentSession && evtSessionKey !== currentSession) {
         return; // 서브에이전트 스트리밍 숨기기
       }
       // sessionKey가 없으면 기존 runId 기반 fallback
@@ -259,13 +306,15 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           return cleared.map((m, i) => i === existingIdx ? { ...m, content: text, isLoading: true } : m);
         }
         // NEW assistant message: working 카드는 그대로 유지 (sessions_spawn end에서 처리)
-        return [...cleared, { id: `run-${runId}`, role: 'assistant' as const, content: text, timestamp: new Date(), isLoading: true }];
+        return [...cleared, { id: `run-${runId}`, role: 'assistant' as const, content: text, timestamp: new Date(), isLoading: true, mentionAgentId }];
       });
     } else if (state === 'final') {
       // 서브에이전트 final은 메인 채팅에 표시 안 함 (sessionKey 우선)
       const evtSessionKey = payload.sessionKey as string | undefined;
-      const isSubagent = (evtSessionKey && currentSession && evtSessionKey !== currentSession)
-        || (!evtSessionKey && mainRunId.current && !knownRunIds.current.has(runId));
+      const mentionAgentId = evtSessionKey ? mentionSessionKeys.current.get(evtSessionKey) : undefined;
+      const isMention = !!mentionAgentId;
+      const isSubagent = !isMention && ((evtSessionKey && currentSession && evtSessionKey !== currentSession)
+        || (!evtSessionKey && mainRunId.current && !knownRunIds.current.has(runId)));
       if (isSubagent) {
         // 서브에이전트 final → sessionKey에서 agentId 추출해서 해당 working 카드 제거
         const subSessionKey = (payload.sessionKey as string) || '';
@@ -322,12 +371,27 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
 
         const idx = updated.findIndex(m => m.id === `run-${runId}`);
         if (idx >= 0) {
-          updated[idx] = { ...updated[idx], content: text, isLoading: false };
+          updated[idx] = { ...updated[idx], content: text, isLoading: false, mentionAgentId: mentionAgentId || updated[idx].mentionAgentId };
           return updated;
         }
-        return [...updated, { id: `run-${runId}`, role: 'assistant' as const, content: text, timestamp: new Date(), isLoading: false }];
+        return [...updated, { id: `run-${runId}`, role: 'assistant' as const, content: text, timestamp: new Date(), isLoading: false, mentionAgentId }];
       });
-      fetchSessions();
+      // mention 세션 완료 → 부모 세션 로그에 응답 저장 후 map 정리
+      if (isMention && evtSessionKey && mentionAgentId) {
+        const parentKey = mentionParentByKey.current.get(evtSessionKey);
+        if (parentKey) {
+          appendMentionLog(parentKey, {
+            id: `run-${runId}`,
+            role: 'assistant',
+            content: text,
+            ts: Date.now(),
+            mentionAgentId,
+          });
+        }
+        mentionSessionKeys.current.delete(evtSessionKey);
+        mentionParentByKey.current.delete(evtSessionKey);
+      }
+      if (!isMention) fetchSessions();
     } else if (state === 'error') {
       currentRunId.current = null;
       setIsSending(false);
@@ -551,8 +615,28 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
 
   // Send chat message
   const sendMessage = useCallback(async (content: string, attachments?: File[]) => {
-    const sessionKey = currentSession || 'main';
+    // @멘션 파싱: 메시지 맨 앞 @<agentId> 감지
+    const mentionMatch = content.match(/^@([a-zA-Z0-9_-]+)\s+([\s\S]*)$/);
+    let mentionTargetId: string | null = null;
+    let mentionRest = '';
+    if (mentionMatch) {
+      const candidateId = mentionMatch[1];
+      const candidate = agentsRef.current.find(a => a.id === candidateId && !a.id.endsWith('-discord'));
+      if (candidate) {
+        mentionTargetId = candidate.id;
+        mentionRest = mentionMatch[2].trim();
+      }
+    }
+
     const idempotencyKey = generateId();
+    const parentSessionKey = currentSession || 'main';
+    let sessionKey = parentSessionKey;
+    if (mentionTargetId) {
+      // 별도 mention sessionKey 생성
+      sessionKey = `agent:${mentionTargetId}:mention-${generateId().slice(0, 8)}`;
+      mentionSessionKeys.current.set(sessionKey, mentionTargetId);
+      mentionParentByKey.current.set(sessionKey, parentSessionKey);
+    }
 
     // Build attachments array for images + extract text from documents
     const apiAttachments: Array<{ type: string; mimeType: string; content: string }> = [];
@@ -598,12 +682,27 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     }
 
     // Build final message with file contents
-    let finalMessage = content || '';
+    let finalMessage = mentionTargetId ? mentionRest : (content || '');
     if (fileTexts.length > 0) {
       finalMessage = (finalMessage ? finalMessage + '\n\n' : '') + fileTexts.join('\n\n');
     }
 
-    // Display user message
+    // 멘션인 경우: 현재 채팅의 직전 assistant 응답을 컨텍스트로 prepend
+    if (mentionTargetId) {
+      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && !m.isLoading && m.content);
+      const sourceAgent = agentsRef.current.find(a => {
+        const cur = sessions.find(s => s.sessionKey === currentSession);
+        return cur ? a.id === cur.agentId : a.default;
+      });
+      const sourceName = sourceAgent?.name || '현재 에이전트';
+      if (lastAssistant) {
+        finalMessage = `다른 에이전트("${sourceName}")와 사용자가 대화 중이며, 사용자가 당신의 의견을 요청했습니다.\n\n${sourceName}의 직전 응답:\n"""\n${lastAssistant.content}\n"""\n\n사용자 요청: ${finalMessage}`;
+      } else {
+        finalMessage = `다른 에이전트("${sourceName}")의 세션에서 사용자가 당신을 호출했습니다.\n\n사용자 요청: ${finalMessage}`;
+      }
+    }
+
+    // Display user message (멘션 원본 content 유지 — 사용자가 입력한 그대로)
     const displayContent = fileLabels.length > 0
       ? `${fileLabels.join(' ')}${content ? '\n' + content : ''}`
       : content;
@@ -613,24 +712,24 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
       role: 'user',
       content: displayContent,
       timestamp: new Date(),
+      mentionAgentId: mentionTargetId || undefined,
     };
-    setMessages(prev => {
-      // 첫 사용자 메시지면 sessionKey의 title로 localStorage에 저장
-      const hasUserMsg = prev.some(m => m.role === 'user');
-      if (!hasUserMsg && content.trim()) {
-        try {
-          const titleKey = `session-title:${tokenRef.current}:${sessionKey}`;
-          if (!localStorage.getItem(titleKey)) {
-            const title = content.trim().slice(0, 40);
-            localStorage.setItem(titleKey, title);
-          }
-        } catch {}
-      }
-      return [...prev.filter(m => !m.id.startsWith('working-')), userMsg];
-    });
+    setMessages(prev => [...prev.filter(m => !m.id.startsWith('working-')), userMsg]);
+    // 멘션인 경우 부모 세션 로그에 사용자 메시지 저장
+    if (mentionTargetId) {
+      appendMentionLog(parentSessionKey, {
+        id: userMsg.id,
+        role: 'user',
+        content: displayContent,
+        ts: userMsg.timestamp.getTime(),
+        mentionAgentId: mentionTargetId,
+      });
+    }
     setIsSending(true);
-    mainRunId.current = null;
-    knownRunIds.current.clear();
+    if (!mentionTargetId) {
+      mainRunId.current = null;
+      knownRunIds.current.clear();
+    }
 
     // Send message with attachments parameter (not in message field)
     const messagePayload: Record<string, unknown> = { sessionKey, message: finalMessage || '', idempotencyKey };
@@ -652,6 +751,9 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
       })
       .catch((err) => {
         console.error('chat.send failed:', err);
+        if (mentionTargetId) {
+          mentionSessionKeys.current.delete(sessionKey);
+        }
         setMessages(prev => [...prev, {
           id: `err-${++messageIdCounter.current}`,
           role: 'system',
@@ -659,7 +761,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           timestamp: new Date(),
         }]);
       });
-  }, [currentSession, sendRequest]);
+  }, [currentSession, sendRequest, messages, sessions]);
 
   const createSession = useCallback((agentId?: string) => {
     const agent = agentId || 'main';
@@ -674,8 +776,8 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     sendRequest('chat.history', { sessionKey, limit: 200 })
       .then((res) => {
         const payload = (res as { payload?: Record<string, unknown> }).payload;
-        if (payload?.messages) {
-          const historyMessages = (payload.messages as Array<{
+        {
+          const historyMessages = ((payload?.messages || []) as Array<{
             role: string;
             content: Array<{ type: string; text?: string }> | string;
             timestamp?: number;
@@ -724,23 +826,19 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
             if (c.length < 2) return false;
             return true;
           });
-          setMessages(historyMessages);
-
-          // 첫 사용자 메시지를 localStorage에 캐시 (세션 라벨용)
-          try {
-            const titleKey = `session-title:${tokenRef.current}:${sessionKey}`;
-            if (!localStorage.getItem(titleKey)) {
-              const firstUser = historyMessages.find(m => m.role === 'user');
-              if (firstUser) {
-                // [파일: ...] 라벨 + 본문에서 의미 있는 텍스트만 추출
-                const cleanText = firstUser.content
-                  .replace(/\[파일:\s*[^\]]+\]\n[\s\S]*?(?=\n\[파일:|$)/g, '[파일]')
-                  .trim()
-                  .slice(0, 40);
-                if (cleanText) localStorage.setItem(titleKey, cleanText);
-              }
-            }
-          } catch {}
+          // localStorage 멘션 로그 병합 (타임스탬프 순)
+          const mentionLog = readMentionLog(sessionKey);
+          const mentionMsgs: Message[] = mentionLog.map((e, i) => ({
+            id: `mention-hist-${i}-${e.id}`,
+            role: e.role,
+            content: e.content,
+            timestamp: new Date(e.ts),
+            mentionAgentId: e.mentionAgentId,
+          }));
+          const merged = [...historyMessages, ...mentionMsgs].sort(
+            (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
+          );
+          setMessages(merged);
         }
       })
       .catch(err => console.error('chat.history failed:', err));
@@ -749,8 +847,8 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   const deleteSession = useCallback(async (sessionKey: string) => {
     try {
       await sendRequest('sessions.delete', { key: sessionKey, deleteTranscript: true });
-      // localStorage에서 세션 라벨 캐시 제거
-      try { localStorage.removeItem(`session-title:${tokenRef.current}:${sessionKey}`); } catch {}
+      // 멘션 로그도 함께 제거
+      try { localStorage.removeItem(`mention-log:${tokenRef.current}:${sessionKey}`); } catch {}
       // If deleting the current session, clear messages and reset
       if (sessionKey === currentSession) {
         setCurrentSession(null);

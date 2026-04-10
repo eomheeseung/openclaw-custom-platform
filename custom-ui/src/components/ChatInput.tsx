@@ -1,5 +1,6 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Send, Square, Paperclip, X, FileText, Image as ImageIcon } from 'lucide-react';
+import type { Agent } from '../types';
 
 interface ChatInputProps {
   onSendMessage: (content: string, attachments?: File[]) => void;
@@ -8,31 +9,150 @@ interface ChatInputProps {
   isLoading?: boolean;
   agentName?: string;
   model?: string;
+  agents?: Agent[];
+  currentAgentId?: string;
 }
 
-export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentName, model }: ChatInputProps) {
+export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentName, model, agents = [], currentAgentId }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionStart, setMentionStart] = useState(-1);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mentionItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const mentionDropdownRef = useRef<HTMLDivElement>(null);
+
+  // 멘션 대상 후보: 현재 에이전트 제외 + discord 변형 제외
+  const mentionCandidates = useMemo(() => {
+    return agents.filter(a => a.id !== currentAgentId && !a.id.endsWith('-discord'));
+  }, [agents, currentAgentId]);
+
+  const filteredAgents = useMemo(() => {
+    if (!mentionQuery) return mentionCandidates;
+    const q = mentionQuery.toLowerCase();
+    return mentionCandidates.filter(a =>
+      a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)
+    );
+  }, [mentionCandidates, mentionQuery]);
+
+  useEffect(() => {
+    if (mentionIndex >= filteredAgents.length) setMentionIndex(0);
+  }, [filteredAgents, mentionIndex]);
+
+  // 키보드 네비 시 선택 항목을 스크롤 뷰로 이동
+  useEffect(() => {
+    if (!mentionOpen) return;
+    const el = mentionItemRefs.current[mentionIndex];
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [mentionIndex, mentionOpen]);
+
+  // 드롭다운/textarea 바깥 클릭 시 닫기
+  useEffect(() => {
+    if (!mentionOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (mentionDropdownRef.current?.contains(target)) return;
+      if (textareaRef.current?.contains(target)) return;
+      setMentionOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [mentionOpen]);
 
   // 응답 중이거나 disconnected이면 입력 자체 막음
   const isInputBlocked = disabled || isLoading;
 
   const handleSubmit = useCallback(() => {
     if ((!message.trim() && attachments.length === 0) || isInputBlocked) return;
-    
+
     onSendMessage(message.trim(), attachments.length > 0 ? attachments : undefined);
     setMessage('');
     setAttachments([]);
-    
+    setMentionOpen(false);
+
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
   }, [message, attachments, isInputBlocked, onSendMessage]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  // 커서 앞 텍스트에서 @query 감지. 공백 전까지, 아직 단어 중이면 오픈.
+  const detectMention = useCallback((value: string, cursorPos: number) => {
+    const before = value.slice(0, cursorPos);
+    const atIdx = before.lastIndexOf('@');
+    if (atIdx < 0) return { open: false, start: -1, query: '' };
+    // @ 앞 글자가 공백/줄바꿈이거나 맨 앞이어야 함
+    const prevCh = atIdx > 0 ? before[atIdx - 1] : ' ';
+    if (prevCh !== ' ' && prevCh !== '\n' && atIdx !== 0) {
+      return { open: false, start: -1, query: '' };
+    }
+    const query = before.slice(atIdx + 1);
+    // 공백이 포함되면 멘션 종료
+    if (/\s/.test(query)) return { open: false, start: -1, query: '' };
+    return { open: true, start: atIdx, query };
+  }, []);
+
+  const insertMention = useCallback((agent: Agent) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const cursor = ta.selectionStart ?? message.length;
+    if (mentionStart < 0) return;
+    const before = message.slice(0, mentionStart);
+    const after = message.slice(cursor);
+    const inserted = `@${agent.id} `;
+    const next = before + inserted + after;
+    setMessage(next);
+    setMentionOpen(false);
+    setMentionQuery('');
+    setMentionStart(-1);
+    // 커서 위치 복원
+    const nextCursor = before.length + inserted.length;
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(nextCursor, nextCursor);
+      }
+    });
+  }, [message, mentionStart]);
+
+  const handleMessageChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setMessage(value);
+    const cursorPos = e.target.selectionStart ?? value.length;
+    const m = detectMention(value, cursorPos);
+    setMentionOpen(m.open);
+    setMentionStart(m.start);
+    setMentionQuery(m.query);
+    if (m.open) setMentionIndex(0);
+  }, [detectMention]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen && filteredAgents.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(i => (i + 1) % filteredAgents.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(i => (i - 1 + filteredAgents.length) % filteredAgents.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insertMention(filteredAgents[mentionIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionOpen(false);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -122,11 +242,36 @@ export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentNam
       )}
 
       {/* Input wrapper */}
-      <div className={`flex items-end gap-2.5 bg-background border rounded-2xl px-3 py-2.5 transition-all ${
+      <div className={`relative flex items-end gap-2.5 bg-background border rounded-2xl px-3 py-2.5 transition-all ${
         isInputBlocked
           ? 'border-border-color/50 opacity-60 cursor-not-allowed'
           : 'border-border-color focus-within:border-accent/30 focus-within:shadow-[0_0_0_3px_rgba(26,122,102,0.06)]'
       }`}>
+        {/* @ mention dropdown */}
+        {mentionOpen && filteredAgents.length > 0 && (
+          <div ref={mentionDropdownRef} className="absolute bottom-full left-0 mb-2 w-64 max-h-64 overflow-y-auto bg-card border border-border-color rounded-xl shadow-lg z-20">
+            <div className="px-3 py-1.5 text-[11px] text-text-secondary border-b border-border-color">
+              @ 에이전트 수동 호출
+            </div>
+            {filteredAgents.map((a, i) => (
+              <button
+                key={a.id}
+                ref={(el) => { mentionItemRefs.current[i] = el; }}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); insertMention(a); }}
+                onMouseEnter={() => setMentionIndex(i)}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                  i === mentionIndex ? 'bg-accent/10 text-accent' : 'text-text-primary hover:bg-accent/5'
+                }`}
+              >
+                <span className="text-base">{a.emoji || '🤖'}</span>
+                <span className="flex-1 truncate">{a.name}</span>
+                <span className="text-[10px] text-text-secondary/60 font-mono">{a.id}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Tool buttons */}
         <div className="flex gap-0.5 flex-shrink-0 pb-0.5">
           <button
@@ -138,8 +283,32 @@ export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentNam
             <Paperclip className="w-4 h-4" />
           </button>
           <button
+            type="button"
+            onClick={() => {
+              const ta = textareaRef.current;
+              if (!ta) return;
+              ta.focus();
+              const cursor = ta.selectionStart ?? message.length;
+              const before = message.slice(0, cursor);
+              const after = message.slice(cursor);
+              const needsSpace = before.length > 0 && !/\s$/.test(before);
+              const prefix = needsSpace ? ' @' : '@';
+              const next = before + prefix + after;
+              setMessage(next);
+              const nextCursor = before.length + prefix.length;
+              setMentionOpen(true);
+              setMentionStart(nextCursor - 1);
+              setMentionQuery('');
+              setMentionIndex(0);
+              requestAnimationFrame(() => {
+                if (textareaRef.current) {
+                  textareaRef.current.focus();
+                  textareaRef.current.setSelectionRange(nextCursor, nextCursor);
+                }
+              });
+            }}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-text-secondary/60 hover:text-accent hover:bg-accent/5 transition-all text-base font-semibold disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-            title="에이전트 지정"
+            title="에이전트 멘션"
             disabled={isInputBlocked}
           >
             @
@@ -158,7 +327,7 @@ export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentNam
         <textarea
           ref={textareaRef}
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={handleMessageChange}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           onPaste={handlePaste}

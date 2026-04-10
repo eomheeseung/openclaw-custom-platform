@@ -58,6 +58,8 @@ export function Sidebar({
 
   const filteredSessions = sessions.filter(s => {
     if (s.sessionKey.includes('subagent')) return false;
+    // 멘션 호출용 임시 세션 (agent:xxx:mention-yyy) 은 사이드바에서 숨김
+    if (/:mention-/.test(s.sessionKey)) return false;
     const label = s.label || '';
     if (label.includes('HEARTBEAT') || label.includes('heartbeat')) return false;
     return true;

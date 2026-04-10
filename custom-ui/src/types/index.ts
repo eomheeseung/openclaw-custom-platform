@@ -26,6 +26,7 @@ export interface Message {
   attachments?: Attachment[];
   isLoading?: boolean;
   toolCalls?: ToolCall[];
+  mentionAgentId?: string;
 }
 
 export interface Attachment {
