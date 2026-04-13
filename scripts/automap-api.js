@@ -1060,6 +1060,99 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/drive/advanced-search
+  // Body: { userNN, modifiedAfter, modifiedBefore, modifiedByName, modifiedByEmail,
+  //         nameContains, fullTextContains, mimeType, driveId, includeFolders,
+  //         pageSize(100), maxPages(10) }
+  if (req.method === 'POST' && url.pathname === '/api/drive/advanced-search') {
+    try {
+      const body = await parseBody(req);
+      const {
+        userNN,
+        modifiedAfter, modifiedBefore,
+        modifiedByName, modifiedByEmail,
+        nameContains, fullTextContains,
+        mimeType, driveId,
+        includeFolders = false,
+        pageSize = 100, maxPages = 10,
+      } = body || {};
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+
+      const accessToken = await getValidAccessToken(userNN);
+      const esc = s => String(s).replace(/'/g, "\\'");
+
+      const qParts = ['trashed = false'];
+      if (modifiedAfter)  qParts.push(`modifiedTime > '${esc(modifiedAfter)}T00:00:00'`);
+      if (modifiedBefore) qParts.push(`modifiedTime < '${esc(modifiedBefore)}T23:59:59'`);
+      if (nameContains)     qParts.push(`name contains '${esc(nameContains)}'`);
+      if (fullTextContains) qParts.push(`fullText contains '${esc(fullTextContains)}'`);
+      if (mimeType) qParts.push(`mimeType = '${esc(mimeType)}'`);
+      if (!includeFolders) qParts.push("mimeType != 'application/vnd.google-apps.folder'");
+      const q = qParts.join(' and ');
+
+      // corpora / driveId
+      const corporaParams = driveId
+        ? `corpora=drive&driveId=${encodeURIComponent(driveId)}`
+        : 'corpora=allDrives';
+
+      const nameLower = modifiedByName ? String(modifiedByName).toLowerCase() : null;
+      const emailLower = modifiedByEmail ? String(modifiedByEmail).toLowerCase() : null;
+
+      const cappedPageSize = Math.max(1, Math.min(1000, parseInt(pageSize, 10) || 100));
+      const cappedMaxPages = Math.max(1, Math.min(50, parseInt(maxPages, 10) || 10));
+
+      let pageToken = '';
+      let totalFetched = 0;
+      const collected = [];
+      let stoppedReason = 'end';
+
+      for (let page = 0; page < cappedMaxPages; page++) {
+        const fields = 'nextPageToken,files(id,name,mimeType,size,modifiedTime,parents,webViewLink,driveId,lastModifyingUser)';
+        let apiUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&pageSize=${cappedPageSize}&fields=${encodeURIComponent(fields)}&includeItemsFromAllDrives=true&supportsAllDrives=true&${corporaParams}&orderBy=modifiedTime desc`;
+        if (pageToken) apiUrl += `&pageToken=${encodeURIComponent(pageToken)}`;
+
+        const result = await gmailApiRequest('GET', apiUrl, accessToken);
+        if (result.status >= 400) {
+          jsonRes(res, result.status, { ok: false, error: result.data?.error?.message || 'Search failed', page, totalFetched });
+          return;
+        }
+        const files = result.data.files || [];
+        totalFetched += files.length;
+
+        for (const f of files) {
+          const mb = f.lastModifyingUser || {};
+          if (nameLower && (mb.displayName || '').toLowerCase() !== nameLower) continue;
+          if (emailLower && (mb.emailAddress || '').toLowerCase() !== emailLower) continue;
+          collected.push({
+            id: f.id, name: f.name, mimeType: f.mimeType,
+            size: f.size || null, modifiedTime: f.modifiedTime || null,
+            modifiedBy: { name: mb.displayName || null, email: mb.emailAddress || null },
+            parents: f.parents || [], driveId: f.driveId || null,
+            webViewLink: f.webViewLink || null,
+          });
+        }
+
+        pageToken = result.data.nextPageToken || '';
+        if (!pageToken) { stoppedReason = 'end'; break; }
+        if (page + 1 >= cappedMaxPages) { stoppedReason = 'maxPages'; break; }
+      }
+
+      const token = loadGoogleToken(userNN);
+      jsonRes(res, 200, {
+        ok: true, account: token?.email || '',
+        query: q, corpora: driveId ? `drive:${driveId}` : 'allDrives',
+        files: collected,
+        totalFetched, matched: collected.length,
+        stoppedReason,
+        nextPageToken: pageToken || null,
+      });
+    } catch (err) {
+      console.error('[drive] advanced-search error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   // GET /api/drive/read?userNN=01&fileId=xxx
   if (req.method === 'GET' && url.pathname === '/api/drive/read') {
     try {

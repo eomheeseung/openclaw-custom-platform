@@ -409,3 +409,34 @@ gcurl POST /api/mail/send '{"to":"수신자@tideflo.com","subject":"제목","bod
 ### 발송 후 확인
 응답에 `"success": true`와 `"messageId"`가 있으면 성공. 없거나 에러면 사용자에게 그대로 보고.
 
+## Drive 고급 검색 (대규모/수정자·기간 필터)
+
+`gog drive search`는 단순 키워드만 지원해서 수정자·기간 범위 같은 정밀 조회는 불가능. 대규모·정밀 검색은 아래 엔드포인트를 써라.
+
+### 사용법
+```bash
+gcurl POST /api/drive/advanced-search '{"modifiedAfter":"2026-04-06","modifiedByName":"차명건","pageSize":100,"maxPages":10}'
+```
+
+### 파라미터
+- `modifiedAfter`: "YYYY-MM-DD" (해당 날짜 이후 수정된 것만)
+- `modifiedBefore`: "YYYY-MM-DD"
+- `modifiedByName`: 정확한 표시 이름 (예: "차명건")
+- `modifiedByEmail`: 이메일 (예: "blueyooe@tideflo.com")
+- `nameContains`: 파일명 부분 일치
+- `fullTextContains`: 본문 부분 일치
+- `mimeType`: 예 "application/pdf", "application/vnd.google-apps.spreadsheet"
+- `driveId`: 특정 공유 드라이브 ID 한정 (없으면 전체)
+- `includeFolders`: true면 폴더도 포함 (기본 false)
+- `pageSize`: 기본 100, 최대 1000
+- `maxPages`: 기본 10, 최대 50 (= 최대 50000개)
+
+### 응답
+`{ok, account, files:[{id,name,mimeType,modifiedTime,modifiedBy:{name,email},parents,driveId,webViewLink,size}], totalFetched, matched, stoppedReason("end"|"maxPages"), nextPageToken}`
+
+### 언제 쓰나
+- 단순 키워드로 안 잡히는 파일 찾을 때
+- 특정 기간 × 특정 수정자 조합
+- 여러 공유 드라이브 한 번에 스캔
+- 단순 조회는 기존 `gog drive search` 또는 `gog drive recent N` 사용
+
