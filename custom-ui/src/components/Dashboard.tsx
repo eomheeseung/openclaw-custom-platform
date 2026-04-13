@@ -659,7 +659,14 @@ export function Dashboard({ sendRequest, agents, sessions: propSessions, message
 
         {/* Right panel */}
         <div className="w-80 xl:w-96 border-l border-gray-800/30 p-4 flex-shrink-0 overflow-hidden">
-          <ActivityLog feed={activityFeed} cronRuns={cronRuns} onClickEntry={onNavigateToChat} onClear={() => { setActivityFeed([]); localStorage.removeItem('tideclaw-activity-log'); }} />
+          <ActivityLog feed={activityFeed} cronRuns={cronRuns} onClickEntry={onNavigateToChat} onClear={async () => {
+            setActivityFeed([]);
+            localStorage.removeItem('tideclaw-activity-log');
+            try {
+              await sendRequest('tools.invoke' as string, { tool: 'exec', args: { command: 'rm -f /home/node/.openclaw/cron/runs/*.jsonl' } });
+            } catch { /* ignore */ }
+            setCronRuns([]);
+          }} />
         </div>
       </div>
 

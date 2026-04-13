@@ -13,10 +13,72 @@ interface CronJob {
   schedule: string; // normalized cron expression for UI
   text: string;
   agentId?: string;
+  channel: DeliveryChannel;
   enabled: boolean;
   nextRunAtMs?: number;
   lastRunAtMs?: number;
   updatedAtMs?: number;
+}
+
+type DeliveryChannel = 'web' | 'discord' | 'telegram';
+
+const CHANNEL_OPTIONS: Array<{ value: DeliveryChannel; label: string; emoji: string }> = [
+  { value: 'web', label: '웹', emoji: '🌐' },
+  { value: 'discord', label: '디스코드', emoji: '💬' },
+  { value: 'telegram', label: '텔레그램', emoji: '✈️' },
+];
+
+function buildDeliveryParam(channel: DeliveryChannel): Record<string, unknown> {
+  if (channel === 'web') return { mode: 'none' };
+  return { mode: 'announce', channel };
+}
+
+function parseChannelFromJob(j: Record<string, unknown>): DeliveryChannel {
+  const d = j.delivery as { mode?: string; channel?: string } | undefined;
+  if (!d || d.mode === 'none') return 'web';
+  if (d.channel === 'discord' || d.channel === 'telegram') return d.channel;
+  return 'web';
+}
+
+const MAIL_BLOCK_MARKER = '[작업 완료 후 메일 발송]';
+
+function stripMailBlock(message: string): string {
+  const idx = message.indexOf(MAIL_BLOCK_MARKER);
+  if (idx < 0) return message;
+  return message.slice(0, idx).trimEnd();
+}
+
+function parseMailBlock(message: string): { enabled: boolean; to: string; cc: string; subject: string } {
+  const idx = message.indexOf(MAIL_BLOCK_MARKER);
+  if (idx < 0) return { enabled: false, to: '', cc: '', subject: '' };
+  const block = message.slice(idx);
+  const get = (key: string) => {
+    const m = block.match(new RegExp(`${key}:\\s*(.+)`));
+    return m ? m[1].trim() : '';
+  };
+  return { enabled: true, to: get('수신자'), cc: get('참조'), subject: get('제목') };
+}
+
+function buildMailBlock(to: string, cc: string, subject: string): string {
+  const safeSubject = subject.trim() || '[크론] 작업 결과';
+  const jsonParts: string[] = [`"to":"${to.trim()}"`];
+  if (cc.trim()) jsonParts.push(`"cc":"${cc.trim()}"`);
+  jsonParts.push(`"subject":"${safeSubject.replace(/"/g, '\\"')}"`);
+  jsonParts.push(`"body":"<리포트 본문을 여기 채워서 이스케이프된 JSON으로 전달>"`);
+  return [
+    '',
+    MAIL_BLOCK_MARKER,
+    `수신자: ${to.trim()}`,
+    cc.trim() ? `참조: ${cc.trim()}` : '참조: (없음)',
+    `제목: ${safeSubject}`,
+    '',
+    '작업이 끝나면 반드시 아래 형식의 명령 하나만 실행해서 메일을 발송해. 다른 도구/명령 추측 금지.',
+    '```',
+    `gcurl POST /api/mail/send '{${jsonParts.join(',')}}'`,
+    '```',
+    '- body 값은 위에서 작성한 리포트 본문을 한 줄 JSON 문자열로 이스케이프(\\n, \\", 등)해서 넣어.',
+    '- 응답에 "ok":true 와 "messageId" 있으면 발송 성공. 없으면 그 응답 그대로 보고.',
+  ].join('\n');
 }
 
 interface CronRun {
@@ -30,12 +92,16 @@ interface CronRun {
 }
 
 const SCHEDULE_PRESETS = [
+  { label: '1분마다', value: '* * * * *', desc: '테스트용' },
+  { label: '5분마다', value: '*/5 * * * *', desc: '짧은 간격' },
+  { label: '10분마다', value: '*/10 * * * *', desc: '짧은 간격' },
+  { label: '30분마다', value: '*/30 * * * *', desc: '중간 간격' },
+  { label: '매시간', value: '0 * * * *', desc: '1시간마다' },
+  { label: '3시간마다', value: '0 */3 * * *', desc: '3시간 간격' },
   { label: '매일 오전 9시', value: '0 9 * * *', desc: '매일 아침' },
   { label: '매일 오후 6시', value: '0 18 * * *', desc: '매일 저녁' },
   { label: '평일 오전 9시', value: '0 9 * * 1-5', desc: '월~금 아침' },
   { label: '평일 오후 6시', value: '0 18 * * 1-5', desc: '월~금 저녁' },
-  { label: '매시간', value: '0 * * * *', desc: '1시간마다' },
-  { label: '3시간마다', value: '0 */3 * * *', desc: '3시간 간격' },
   { label: '매주 월요일 오전 9시', value: '0 9 * * 1', desc: '주간 시작' },
   { label: '매주 금요일 오후 5시', value: '0 17 * * 5', desc: '주간 마무리' },
   { label: '매월 1일 오전 9시', value: '0 9 1 * *', desc: '월간' },
@@ -52,9 +118,12 @@ const DAY_OPTIONS = [
 ];
 
 /** 사용자 선택으로부터 cron 표현식 생성 */
-function buildCron(hour: number, minute: number, days: number[], intervalHours?: number): string {
-  if (intervalHours && intervalHours > 0) {
-    return `${minute} */${intervalHours} * * *`;
+function buildCron(hour: number, minute: number, days: number[], interval?: { value: number; unit: 'm' | 'h' }): string {
+  if (interval && interval.value > 0) {
+    if (interval.unit === 'm') {
+      return interval.value === 1 ? '* * * * *' : `*/${interval.value} * * * *`;
+    }
+    return `${minute} */${interval.value} * * *`;
   }
   const dowPart = days.length === 0 || days.length === 7 ? '*' : days.join(',');
   return `${minute} ${hour} * * ${dowPart}`;
@@ -81,6 +150,10 @@ function cronToHuman(cron: string): string {
     const period = h < 12 ? '오전' : '오후';
     const displayH = h > 12 ? h - 12 : h === 0 ? 12 : h;
     timeStr = `${period} ${displayH}시${m > 0 ? ` ${m}분` : ''}`;
+  } else if (min === '*' && hour === '*') {
+    timeStr = '1분마다';
+  } else if (min.startsWith('*/') && hour === '*') {
+    timeStr = `${min.slice(2)}분마다`;
   } else if (hour === '*') {
     timeStr = `매시간 ${min}분`;
   } else if (hour.startsWith('*/')) {
@@ -106,18 +179,26 @@ function cronToHuman(cron: string): string {
 }
 
 /** cron 표현식에서 시간/분/요일 파싱 */
-function parseCron(cron: string): { hour: number; minute: number; days: number[]; intervalHours: number } {
+function parseCron(cron: string): { hour: number; minute: number; days: number[]; intervalValue: number; intervalUnit: 'm' | 'h' } {
   const parts = cron.split(/\s+/);
-  if (parts.length < 5) return { hour: 9, minute: 0, days: [], intervalHours: 0 };
+  if (parts.length < 5) return { hour: 9, minute: 0, days: [], intervalValue: 0, intervalUnit: 'h' };
 
   const [min, hour, , , dow] = parts;
 
-  let intervalHours = 0;
+  let intervalValue = 0;
+  let intervalUnit: 'm' | 'h' = 'h';
   let h = 9;
   let m = parseInt(min) || 0;
 
-  if (hour.startsWith('*/')) {
-    intervalHours = parseInt(hour.slice(2)) || 1;
+  if (min === '*' && hour === '*') {
+    intervalValue = 1;
+    intervalUnit = 'm';
+  } else if (min.startsWith('*/') && hour === '*') {
+    intervalValue = parseInt(min.slice(2)) || 1;
+    intervalUnit = 'm';
+  } else if (hour.startsWith('*/')) {
+    intervalValue = parseInt(hour.slice(2)) || 1;
+    intervalUnit = 'h';
   } else if (hour !== '*') {
     h = parseInt(hour) || 0;
   }
@@ -133,7 +214,7 @@ function parseCron(cron: string): { hour: number; minute: number; days: number[]
     }
   }
 
-  return { hour: h, minute: m, days, intervalHours };
+  return { hour: h, minute: m, days, intervalValue, intervalUnit };
 }
 
 type ScheduleMode = 'preset' | 'custom';
@@ -147,18 +228,22 @@ function SchedulePicker({ value, onChange }: { value: string; onChange: (cron: s
   const [hour, setHour] = useState(parsed.hour);
   const [minute, setMinute] = useState(parsed.minute);
   const [days, setDays] = useState<number[]>(parsed.days);
-  const [intervalHours, setIntervalHours] = useState(parsed.intervalHours);
-  const [useInterval, setUseInterval] = useState(parsed.intervalHours > 0);
+  const [intervalValue, setIntervalValue] = useState(parsed.intervalValue);
+  const [intervalUnit, setIntervalUnit] = useState<'m' | 'h'>(parsed.intervalUnit);
+  const [useInterval, setUseInterval] = useState(parsed.intervalValue > 0);
 
-  const updateCustom = (h: number, m: number, d: number[], ih: number, isInterval: boolean) => {
-    onChange(buildCron(h, m, d, isInterval ? ih : undefined));
+  const updateCustom = (h: number, m: number, d: number[], iv: number, iu: 'm' | 'h', isInterval: boolean) => {
+    onChange(buildCron(h, m, d, isInterval ? { value: iv, unit: iu } : undefined));
   };
 
   const toggleDay = (day: number) => {
     const next = days.includes(day) ? days.filter(d => d !== day) : [...days, day];
     setDays(next);
-    updateCustom(hour, minute, next, intervalHours, useInterval);
+    updateCustom(hour, minute, next, intervalValue, intervalUnit, useInterval);
   };
+
+  const MINUTE_OPTIONS = [1, 2, 5, 10, 15, 20, 30];
+  const HOUR_OPTIONS = [1, 2, 3, 4, 6, 8, 12];
 
   return (
     <div>
@@ -177,7 +262,7 @@ function SchedulePicker({ value, onChange }: { value: string; onChange: (cron: s
         <button
           onClick={() => {
             setMode('custom');
-            if (!value) updateCustom(hour, minute, days, intervalHours, useInterval);
+            if (!value) updateCustom(hour, minute, days, intervalValue, intervalUnit, useInterval);
           }}
           className={`flex-1 px-3 py-1.5 rounded-md text-sm transition-colors ${
             mode === 'custom' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
@@ -211,7 +296,7 @@ function SchedulePicker({ value, onChange }: { value: string; onChange: (cron: s
             <button
               onClick={() => {
                 setUseInterval(false);
-                updateCustom(hour, minute, days, intervalHours, false);
+                updateCustom(hour, minute, days, intervalValue, intervalUnit, false);
               }}
               className={`flex-1 px-3 py-1.5 rounded-md text-sm transition-colors ${
                 !useInterval ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
@@ -222,34 +307,49 @@ function SchedulePicker({ value, onChange }: { value: string; onChange: (cron: s
             <button
               onClick={() => {
                 setUseInterval(true);
-                const ih = intervalHours || 1;
-                setIntervalHours(ih);
-                updateCustom(hour, minute, days, ih, true);
+                const iv = intervalValue || 5;
+                setIntervalValue(iv);
+                updateCustom(hour, minute, days, iv, intervalUnit, true);
               }}
               className={`flex-1 px-3 py-1.5 rounded-md text-sm transition-colors ${
                 useInterval ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
               }`}
             >
-              시간 간격
+              반복 간격
             </button>
           </div>
 
           {useInterval ? (
-            /* 시간 간격 모드 */
+            /* 반복 간격 모드 */
             <div>
               <label className="block text-xs text-text-secondary mb-1">반복 간격</label>
               <div className="flex items-center gap-2">
                 <select
-                  value={intervalHours}
+                  value={intervalUnit}
                   onChange={e => {
-                    const ih = parseInt(e.target.value);
-                    setIntervalHours(ih);
-                    updateCustom(hour, minute, days, ih, true);
+                    const iu = e.target.value as 'm' | 'h';
+                    const defaultVal = iu === 'm' ? 5 : 1;
+                    const iv = (iu === 'm' ? MINUTE_OPTIONS : HOUR_OPTIONS).includes(intervalValue) ? intervalValue : defaultVal;
+                    setIntervalUnit(iu);
+                    setIntervalValue(iv);
+                    updateCustom(hour, minute, days, iv, iu, true);
                   }}
                   className="px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent"
                 >
-                  {[1, 2, 3, 4, 6, 8, 12].map(h => (
-                    <option key={h} value={h}>{h}시간</option>
+                  <option value="m">분</option>
+                  <option value="h">시간</option>
+                </select>
+                <select
+                  value={intervalValue}
+                  onChange={e => {
+                    const iv = parseInt(e.target.value);
+                    setIntervalValue(iv);
+                    updateCustom(hour, minute, days, iv, intervalUnit, true);
+                  }}
+                  className="px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent"
+                >
+                  {(intervalUnit === 'm' ? MINUTE_OPTIONS : HOUR_OPTIONS).map(n => (
+                    <option key={n} value={n}>{n}{intervalUnit === 'm' ? '분' : '시간'}</option>
                   ))}
                 </select>
                 <span className="text-sm text-text-secondary">마다 실행</span>
@@ -265,7 +365,7 @@ function SchedulePicker({ value, onChange }: { value: string; onChange: (cron: s
                   onChange={e => {
                     const h = parseInt(e.target.value);
                     setHour(h);
-                    updateCustom(h, minute, days, intervalHours, false);
+                    updateCustom(h, minute, days, intervalValue, intervalUnit, false);
                   }}
                   className="px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent"
                 >
@@ -280,7 +380,7 @@ function SchedulePicker({ value, onChange }: { value: string; onChange: (cron: s
                   onChange={e => {
                     const m = parseInt(e.target.value);
                     setMinute(m);
-                    updateCustom(hour, m, days, intervalHours, false);
+                    updateCustom(hour, m, days, intervalValue, intervalUnit, false);
                   }}
                   className="px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent"
                 >
@@ -345,13 +445,21 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
   const [newName, setNewName] = useState('');
   const [newSchedule, setNewSchedule] = useState('');
   const [newText, setNewText] = useState('');
-  const [newAgentId, setNewAgentId] = useState('');
+  const [newChannel, setNewChannel] = useState<DeliveryChannel>('web');
+  const [newMailOn, setNewMailOn] = useState(false);
+  const [newMailTo, setNewMailTo] = useState('');
+  const [newMailCc, setNewMailCc] = useState('');
+  const [newMailSubject, setNewMailSubject] = useState('');
 
   // Edit form
   const [editName, setEditName] = useState('');
   const [editSchedule, setEditSchedule] = useState('');
   const [editText, setEditText] = useState('');
-  const [editAgentId, setEditAgentId] = useState('');
+  const [editChannel, setEditChannel] = useState<DeliveryChannel>('web');
+  const [editMailOn, setEditMailOn] = useState(false);
+  const [editMailTo, setEditMailTo] = useState('');
+  const [editMailCc, setEditMailCc] = useState('');
+  const [editMailSubject, setEditMailSubject] = useState('');
 
   const showMessage = (msg: string, isError = false) => {
     if (isError) { setError(msg); setSuccess(''); }
@@ -377,6 +485,7 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
             schedule: cronExpr,
             text: pl?.text || pl?.message as string || (j.text as string) || '',
             agentId: (j.agentId as string) || undefined,
+            channel: parseChannelFromJob(j),
             enabled: j.enabled as boolean,
             nextRunAtMs: state?.nextRunAtMs || (j.nextRunAtMs as number | undefined),
             lastRunAtMs: state?.lastRunAtMs || (j.lastRunAtMs as number | undefined),
@@ -411,23 +520,26 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
       return;
     }
     try {
-      const isDefault = !newAgentId || newAgentId === agents.find(a => a.id === agents[0]?.id)?.id;
-      const defaultAgentId = agents[0]?.id;
+      if (newMailOn && !newMailTo.trim()) {
+        showMessage('메일 발송을 켰으면 수신자를 입력하세요', true);
+        return;
+      }
+      const baseText = newText.trim();
+      const finalText = newMailOn
+        ? baseText + '\n' + buildMailBlock(newMailTo, newMailCc, newMailSubject)
+        : baseText;
       const params: Record<string, unknown> = {
         name: newName.trim(),
         schedule: { cron: newSchedule.trim() },
+        sessionTarget: 'isolated',
+        payload: { kind: 'agentTurn', message: finalText },
+        delivery: buildDeliveryParam(newChannel),
       };
-      params.sessionTarget = 'isolated';
-      if (newAgentId && newAgentId !== defaultAgentId) {
-        params.agentId = newAgentId;
-        params.payload = { kind: 'agentTurn', message: newText.trim() };
-      } else {
-        params.payload = { kind: 'agentTurn', message: newText.trim() };
-      }
       await sendRequest('cron.add', params);
       showMessage(`"${newName}" 예약 작업이 생성되었습니다`);
       setShowCreate(false);
-      setNewName(''); setNewSchedule(''); setNewText(''); setNewAgentId('');
+      setNewName(''); setNewSchedule(''); setNewText(''); setNewChannel('web');
+      setNewMailOn(false); setNewMailTo(''); setNewMailCc(''); setNewMailSubject('');
       loadJobs();
     } catch {
       showMessage('예약 작업 생성에 실패했습니다', true);
@@ -436,10 +548,21 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
 
   const handleUpdate = async (jobId: string) => {
     try {
+      if (editMailOn && !editMailTo.trim()) {
+        showMessage('메일 발송을 켰으면 수신자를 입력하세요', true);
+        return;
+      }
       const patch: Record<string, unknown> = {};
       if (editName.trim()) patch.name = editName.trim();
       if (editSchedule.trim()) patch.schedule = { cron: editSchedule.trim() };
-      if (editText.trim()) patch.text = editText.trim();
+      if (editText.trim()) {
+        const baseText = editText.trim();
+        const finalText = editMailOn
+          ? baseText + '\n' + buildMailBlock(editMailTo, editMailCc, editMailSubject)
+          : baseText;
+        patch.payload = { kind: 'agentTurn', message: finalText };
+      }
+      patch.delivery = buildDeliveryParam(editChannel);
 
       await sendRequest('cron.update', { id: jobId, patch });
       showMessage('예약 작업이 수정되었습니다');
@@ -484,8 +607,13 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
     setEditingJob(job.id);
     setEditName(job.name);
     setEditSchedule(job.schedule);
-    setEditText(job.text);
-    setEditAgentId(job.agentId || '');
+    const mail = parseMailBlock(job.text);
+    setEditText(stripMailBlock(job.text));
+    setEditChannel(job.channel);
+    setEditMailOn(mail.enabled);
+    setEditMailTo(mail.to);
+    setEditMailCc(mail.cc);
+    setEditMailSubject(mail.subject);
   };
 
   const formatTime = (ms?: number) => {
@@ -545,26 +673,27 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
             />
           </div>
 
-          {agents.length > 0 && (
-            <div>
-              <label className="block text-xs text-text-secondary mb-2">실행할 봇</label>
-              <div className="flex gap-2">
-                {agents.map(agent => (
-                  <button
-                    key={agent.id}
-                    onClick={() => setNewAgentId(agent.id)}
-                    className={`px-3 py-2 rounded-lg text-sm transition-colors border ${
-                      (newAgentId || agents[0]?.id) === agent.id
-                        ? 'border-accent bg-accent/10 text-accent'
-                        : 'border-border-color bg-background text-text-primary hover:border-accent/50'
-                    }`}
-                  >
-                    {agent.emoji || '🤖'} {agent.name}
-                  </button>
-                ))}
-              </div>
+          <div>
+            <label className="block text-xs text-text-secondary mb-2">전달 채널</label>
+            <div className="flex gap-2">
+              {CHANNEL_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setNewChannel(opt.value)}
+                  className={`px-3 py-2 rounded-lg text-sm transition-colors border ${
+                    newChannel === opt.value
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border-color bg-background text-text-primary hover:border-accent/50'
+                  }`}
+                >
+                  {opt.emoji} {opt.label}
+                </button>
+              ))}
             </div>
-          )}
+            <p className="text-xs text-text-secondary mt-1">
+              비서가 작업을 수행하고 선택한 채널로 결과를 전달합니다. (웹: UI 활동 로그에만 기록)
+            </p>
+          </div>
 
           <SchedulePicker value={newSchedule} onChange={setNewSchedule} />
 
@@ -580,6 +709,38 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
             <p className="text-xs text-text-secondary mt-1">
               이 메시지가 설정한 시간에 자동으로 봇에게 전송됩니다.
             </p>
+          </div>
+
+          <div className="bg-background rounded-lg p-3">
+            <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+              <input type="checkbox" checked={newMailOn} onChange={e => setNewMailOn(e.target.checked)} className="w-4 h-4 accent-accent" />
+              📧 작업 완료 후 메일 발송 (선택)
+            </label>
+            {newMailOn && (
+              <div className="mt-3 space-y-2">
+                <div>
+                  <label className="block text-xs text-text-secondary mb-1">수신자 (필수)</label>
+                  <input value={newMailTo} onChange={e => setNewMailTo(e.target.value)}
+                    placeholder="name@tideflo.com (쉼표로 여러 명)"
+                    className="w-full px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent" />
+                </div>
+                <div>
+                  <label className="block text-xs text-text-secondary mb-1">참조 (선택)</label>
+                  <input value={newMailCc} onChange={e => setNewMailCc(e.target.value)}
+                    placeholder="cc@tideflo.com"
+                    className="w-full px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent" />
+                </div>
+                <div>
+                  <label className="block text-xs text-text-secondary mb-1">제목 (선택, 비우면 "[크론] 작업 결과")</label>
+                  <input value={newMailSubject} onChange={e => setNewMailSubject(e.target.value)}
+                    placeholder="[성능 리포트] 네이버 모니터링"
+                    className="w-full px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent" />
+                </div>
+                <p className="text-xs text-text-secondary">
+                  비서가 작업 결과를 본문에 넣어 자동 발송합니다.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2 pt-1">
@@ -710,6 +871,24 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
                         className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent"
                       />
                     </div>
+                    <div>
+                      <label className="block text-xs text-text-secondary mb-2">전달 채널</label>
+                      <div className="flex gap-2">
+                        {CHANNEL_OPTIONS.map(opt => (
+                          <button
+                            key={opt.value}
+                            onClick={() => setEditChannel(opt.value)}
+                            className={`px-3 py-2 rounded-lg text-sm transition-colors border ${
+                              editChannel === opt.value
+                                ? 'border-accent bg-accent/10 text-accent'
+                                : 'border-border-color bg-background text-text-primary hover:border-accent/50'
+                            }`}
+                          >
+                            {opt.emoji} {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <SchedulePicker value={editSchedule} onChange={setEditSchedule} />
                     <div>
                       <label className="block text-xs text-text-secondary mb-1">봇에게 보낼 메시지</label>
@@ -719,6 +898,32 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
                         rows={3}
                         className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-text-primary text-sm resize-none focus:outline-none focus:border-accent"
                       />
+                    </div>
+                    <div className="bg-background rounded-lg p-3">
+                      <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+                        <input type="checkbox" checked={editMailOn} onChange={e => setEditMailOn(e.target.checked)} className="w-4 h-4 accent-accent" />
+                        📧 작업 완료 후 메일 발송 (선택)
+                      </label>
+                      {editMailOn && (
+                        <div className="mt-3 space-y-2">
+                          <div>
+                            <label className="block text-xs text-text-secondary mb-1">수신자 (필수)</label>
+                            <input value={editMailTo} onChange={e => setEditMailTo(e.target.value)}
+                              placeholder="name@tideflo.com"
+                              className="w-full px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-text-secondary mb-1">참조 (선택)</label>
+                            <input value={editMailCc} onChange={e => setEditMailCc(e.target.value)}
+                              className="w-full px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-text-secondary mb-1">제목 (선택)</label>
+                            <input value={editMailSubject} onChange={e => setEditMailSubject(e.target.value)}
+                              className="w-full px-3 py-2 bg-card border border-border-color rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent" />
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <button onClick={() => handleUpdate(job.id)} className="flex items-center gap-1 px-3 py-1.5 bg-accent text-white rounded-lg text-sm hover:bg-accent-hover">
@@ -736,14 +941,20 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
                         <div className="flex items-center gap-2">
                           <span className={`w-2 h-2 rounded-full ${job.enabled ? 'bg-green-400' : 'bg-gray-500'}`} />
                           <p className="font-medium text-text-primary">{job.name}</p>
-                          {job.agentId && (() => {
-                            const agent = agents.find(a => a.id === job.agentId);
+                          {(() => {
+                            const opt = CHANNEL_OPTIONS.find(o => o.value === job.channel);
+                            if (!opt) return null;
                             return (
                               <span className="text-xs px-1.5 py-0.5 bg-accent/10 text-accent rounded">
-                                {agent?.emoji || '🤖'} {agent?.name || job.agentId}
+                                {opt.emoji} {opt.label}
                               </span>
                             );
                           })()}
+                          {parseMailBlock(job.text).enabled && (
+                            <span className="text-xs px-1.5 py-0.5 bg-blue-500/10 text-blue-400 rounded" title={`메일: ${parseMailBlock(job.text).to}`}>
+                              📧 메일
+                            </span>
+                          )}
                           {!job.enabled && (
                             <span className="text-xs px-1.5 py-0.5 bg-gray-500/20 text-gray-400 rounded">비활성</span>
                           )}
@@ -752,7 +963,7 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
                           <Clock className="w-3 h-3 text-text-secondary" />
                           <span className="text-xs text-text-secondary">{cronToHuman(job.schedule)}</span>
                         </div>
-                        <p className="text-sm text-text-secondary mt-2 line-clamp-2">{job.text}</p>
+                        <p className="text-sm text-text-secondary mt-2 line-clamp-2">{stripMailBlock(job.text)}</p>
                         {job.nextRunAtMs && (
                           <p className="text-xs text-accent/70 mt-1">
                             다음 실행: {formatTime(job.nextRunAtMs)}

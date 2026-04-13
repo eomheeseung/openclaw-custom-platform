@@ -81,14 +81,11 @@ const USERS_FILE = '/opt/openclaw/auth/users.json';
 const ACTIVITY_FILE = '/opt/openclaw/auth/activity.json';
 const TOKENS_DIR = '/opt/openclaw/auth/tokens';
 
-// Google OAuth2 config (환경변수로 주입 — .env 또는 docker-compose env)
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+// Google OAuth2 config
+const GOOGLE_CLIENT_ID = '981747784874-vb0ckq8f8abmihqbcagi2ri5384eeoqf.apps.googleusercontent.com';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost/oauth/google/callback';
-const ALLOWED_DOMAIN = process.env.ALLOWED_DOMAIN || '';
-if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-  console.warn('[automap-api] Google OAuth disabled — set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET');
-}
+const GOOGLE_REDIRECT_URI = 'http://claw.tideflo.work/oauth/google/callback';
+const ALLOWED_DOMAIN = 'tideflo.com';
 
 // Session store
 const sessions = new Map();
@@ -658,6 +655,58 @@ const server = http.createServer(async (req, res) => {
       });
       jsonRes(res, 200, { ok: true, stats });
     });
+    return;
+  }
+
+  // POST /api/vnc/status — port 6080 listening + chrome alive?
+  if (req.method === 'POST' && url.pathname === '/api/vnc/status') {
+    const params = await parseBody(req);
+    const { userNN } = params;
+    if (!validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    const cmd = 'VNC=0; CHR=0; ' +
+      'netstat -tlnp 2>/dev/null | grep -q ":6080 " && VNC=1; ' +
+      'ps -eo pid,stat,comm | grep -v "Z" | grep -q "chrome" && CHR=1; ' +
+      'echo "vnc=$VNC chrome=$CHR"';
+    execFile('docker', ['exec', `openclaw-user${userNN}`, 'bash', '-c', cmd],
+      { timeout: 10000 }, (err, stdout) => {
+        if (err) { jsonRes(res, 500, { ok: false, error: err.message }); return; }
+        const out = String(stdout || '');
+        const running = /vnc=1/.test(out);
+        const chrome = /chrome=1/.test(out);
+        jsonRes(res, 200, { ok: true, running, chrome });
+      });
+    return;
+  }
+
+  // POST /api/vnc/start — start Xvfb+x11vnc+websockify (+ Chrome) in target container
+  if (req.method === 'POST' && url.pathname === '/api/vnc/start') {
+    const params = await parseBody(req);
+    const { userNN } = params;
+    if (!validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    // 1단계: VNC 프로세스 (포트 점유 여부로 판정, 좀비 제외)
+    const vncCmd = 'netstat -tlnp 2>/dev/null | grep -q ":6080 " && { echo ALREADY; exit 0; }; ' +
+      'setsid Xvfb :99 -screen 0 1280x720x24 </dev/null >/dev/null 2>&1 & disown; sleep 1; ' +
+      'setsid x11vnc -display :99 -nopw -forever -shared -rfbport 5900 </dev/null >/dev/null 2>&1 & disown; sleep 1; ' +
+      'setsid websockify --web /usr/share/novnc 6080 localhost:5900 </dev/null >/dev/null 2>&1 & disown; sleep 1; echo STARTED';
+    // 2단계: Chrome은 node 유저로 (프로필 권한 맞춤, 좀비 제외)
+    const chromeCmd = 'ps -eo stat,comm | grep -v "Z" | grep -q "chrome" && { echo CHROME_ALREADY; exit 0; }; ' +
+      'DISPLAY=:99 setsid google-chrome ' +
+      '--user-data-dir=/home/node/.openclaw/browser/openclaw/user-data ' +
+      '--no-sandbox --no-first-run --no-default-browser-check ' +
+      '--disable-session-crashed-bubble --disable-infobars ' +
+      '--disable-dev-shm-usage --disable-gpu ' +
+      '--disable-features=VizDisplayCompositor ' +
+      '--remote-debugging-port=18800 ' +
+      'https://www.google.com </dev/null >/dev/null 2>&1 & disown; sleep 1; echo CHROME_STARTED';
+    execFile('docker', ['exec', '-u', 'root', `openclaw-user${userNN}`, 'bash', '-c', vncCmd],
+      { timeout: 15000 }, (err1, stdout1) => {
+        if (err1) { jsonRes(res, 500, { ok: false, error: 'VNC: ' + err1.message }); return; }
+        execFile('docker', ['exec', '-u', 'node', `openclaw-user${userNN}`, 'bash', '-c', chromeCmd],
+          { timeout: 15000 }, (err2, stdout2) => {
+            if (err2) { jsonRes(res, 500, { ok: false, error: 'Chrome: ' + err2.message, vnc: String(stdout1 || '').trim() }); return; }
+            jsonRes(res, 200, { ok: true, vnc: String(stdout1 || '').trim(), chrome: String(stdout2 || '').trim() });
+          });
+      });
     return;
   }
 

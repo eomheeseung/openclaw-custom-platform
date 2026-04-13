@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Network, Bot, Clock, HelpCircle, MessageSquare, LayoutDashboard, Link, Search, Pin, ExternalLink, Settings } from 'lucide-react';
+import { Network, Bot, Clock, HelpCircle, MessageSquare, LayoutDashboard, Link, Search, Pin, ExternalLink, Settings, Monitor } from 'lucide-react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { LoginScreen } from './components/LoginScreen';
 import { Sidebar } from './components/Sidebar';
@@ -11,6 +11,7 @@ import { ChannelManager } from './components/ChannelManager';
 import { Dashboard } from './components/Dashboard';
 import { AdminPanel } from './components/AdminPanel';
 import { HelpModal } from './components/HelpModal';
+import { VNCPanel } from './components/VNCPanel';
 import { IntegrationsPage } from './components/IntegrationsPage';
 import type { Agent, Session } from './types';
 
@@ -47,6 +48,7 @@ function App() {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showVNC, setShowVNC] = useState(false);
 
   const isTideFloDomain = window.location.hostname === 'claw.tideflo.work';
 
@@ -192,6 +194,13 @@ function App() {
           <div className="flex-1" />
           <div className="w-7 h-px bg-border-color my-2" />
           <button
+            onClick={() => setShowVNC(true)}
+            className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all"
+            title="원격 데스크톱 (VNC)"
+          >
+            <Monitor className="w-5 h-5" />
+          </button>
+          <button
             onClick={() => setShowHelp(true)}
             className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all"
             title="도움말"
@@ -283,6 +292,7 @@ function App() {
       </footer>
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showVNC && <VNCPanel token={token} onClose={() => setShowVNC(false)} />}
     </div>
   );
 }

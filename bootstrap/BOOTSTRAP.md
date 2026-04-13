@@ -274,3 +274,138 @@ HTML을 먼저 만들고 wkhtmltopdf로 변환:
 ```bash
 wkhtmltopdf --encoding utf-8 /tmp/문서.html /home/node/gdrive/결과.pdf
 ```
+
+## 웹 접근 규칙 (도구 우선순위)
+
+외부 웹페이지 접근/측정 요청이 오면 아래 순서로 판단해.
+
+### 1. 페이지 로딩 시간/체감 성능/실제 렌더링 측정 → browser 도구
+- 키워드: "로딩 시간", "페이지 로딩", "체감 로딩", "완전히 뜨는 시간", "성능 측정", "속도 체크"
+- **내장 `browser` 도구 사용**. 실패 시 20초 정도 기다렸다가 1회 재시도. 그래도 실패하면 사용자에게 보고 후 중단.
+- **사용자가 지표를 명시하지 않아도 아래 전체 지표를 기본으로 수집·보고해.** 사용자는 자연어로만 말하면 되고, 세부 지표는 네가 알아서 챙긴다.
+
+#### 기본 수집 지표 (전부 한 줄 또는 표로 보고)
+| 지표 | 의미 | 판정 기준 |
+|------|------|----------|
+| 현재 시각 | 측정 시점 (KST) | — |
+| HTTP 상태코드 | 서버 응답 코드 | 200 아니면 ❌ |
+| 페이지 제목 | 실제 렌더된 `<title>` | — |
+| **TTFB** | 서버 응답 시작 | 0.8초 ✅ / 1.8초 ⚠️ / 초과 🚨 |
+| **FCP** | First Contentful Paint (첫 픽셀) | 1.8초 ✅ / 3.0초 ⚠️ / 초과 🚨 |
+| **LCP** | Largest Contentful Paint (최대 콘텐츠) | 2.5초 ✅ / 4.0초 ⚠️ / 초과 🚨 |
+| **DOMContentLoaded** | HTML 파싱 완료 | 참고용 |
+| **Load** | 모든 리소스 로드 완료 | 5초 ✅ / 10초 ⚠️ / 초과 🚨 |
+| 리소스 수/총 크기 | 전체 요청 개수·바이트 | 참고용 |
+
+LCP 판정이 최우선 (Google Core Web Vitals 기준). 요약 한 줄에 LCP 판정 이모지 필수.
+
+#### 절대 위반 금지 (측정 규칙)
+- **추정 금지**. "약 1~2초", "대략", "예상" 같은 표현 절대 쓰지 마. 숫자는 반드시 아래 JS 스니펫 실제 실행 결과만 써.
+- 페이지에 도착했으면 **반드시 evaluate로 측정 스크립트를 실행**해. 스크립트 실행 없이 결과 보고하는 것 금지.
+- 검색/클릭 등으로 **페이지가 전환되면 전환된 결과 페이지에서 다시 측정**해. 메인 페이지 기록을 검색 결과라고 말하지 마.
+- 측정값이 없으면 "측정 실패 (이유)"로 솔직히 보고. 지어내지 마.
+
+#### 측정 스크립트 (browser 도구 안에서 실행)
+browser 도구로 페이지 접속 후 아래 JS를 `evaluate`로 실행해서 결과를 받아라. `performance.timing`만 쓰지 말고 **반드시 PerformanceObserver로 FCP/LCP까지 수집**해.
+
+```javascript
+async () => {
+  // 페이지 로드 완료 대기
+  if (document.readyState !== 'complete') {
+    await new Promise(r => window.addEventListener('load', r, { once: true }));
+  }
+  // FCP / LCP 수집 (PerformanceObserver) + 이미 발생한 것도 getEntriesByType으로 회수
+  const paintEntries = performance.getEntriesByType('paint');
+  const fcp = paintEntries.find(e => e.name === 'first-contentful-paint')?.startTime ?? null;
+
+  let lcp = null;
+  try {
+    // 대부분의 경우 load 이후 LCP가 이미 확정됨
+    const lcpEntries = performance.getEntriesByType('largest-contentful-paint');
+    lcp = lcpEntries.length ? lcpEntries[lcpEntries.length - 1].startTime : null;
+    if (lcp === null) {
+      // 혹시 아직 안 잡혔으면 최대 2초 더 대기
+      lcp = await new Promise(resolve => {
+        const po = new PerformanceObserver(list => {
+          const entries = list.getEntries();
+          if (entries.length) resolve(entries[entries.length - 1].startTime);
+        });
+        po.observe({ type: 'largest-contentful-paint', buffered: true });
+        setTimeout(() => { try { po.disconnect(); } catch {} resolve(null); }, 2000);
+      });
+    }
+  } catch {}
+
+  const nav = performance.getEntriesByType('navigation')[0];
+  const ttfb = nav ? nav.responseStart : (performance.timing.responseStart - performance.timing.navigationStart);
+  const dcl  = nav ? nav.domContentLoadedEventEnd : (performance.timing.domContentLoadedEventEnd - performance.timing.navigationStart);
+  const load = nav ? nav.loadEventEnd : (performance.timing.loadEventEnd - performance.timing.navigationStart);
+  const resources = performance.getEntriesByType('resource');
+  const totalBytes = resources.reduce((sum, r) => sum + (r.transferSize || 0), 0);
+
+  return {
+    title: document.title,
+    ttfb_ms: Math.round(ttfb),
+    fcp_ms: fcp !== null ? Math.round(fcp) : null,
+    lcp_ms: lcp !== null ? Math.round(lcp) : null,
+    domContentLoaded_ms: Math.round(dcl),
+    load_ms: Math.round(load),
+    resource_count: resources.length,
+    total_kb: Math.round(totalBytes / 1024),
+  };
+}
+```
+
+HTTP 상태코드는 browser 도구의 response 객체나 네트워크 응답에서 별도로 얻어라. JS evaluate 결과와 합쳐서 표/한 줄로 보고.
+
+### 2. 단순 응답시간·HTTP 상태·HTML 내용 확인 → exec + curl
+- 키워드: "응답시간", "서버 살아있나", "상태코드", "healthz"
+- **`exec` 도구로 curl 명령 실행** (built-in `web_fetch` 도구는 금지 — 헤더 제어 안 됨)
+- 반드시 브라우저 헤더 붙여라. 안 붙이면 쿠팡 등에서 403 차단.
+
+```bash
+curl -L --compressed \
+  -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" \
+  -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+  -H "Accept-Language: ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7" \
+  -o /dev/null -s -w "http_code=%{http_code} total=%{time_total}s dns=%{time_namelookup}s connect=%{time_connect}s ttfb=%{time_starttransfer}s size=%{size_download}bytes" \
+  <URL>
+```
+
+### 차단 대응
+- curl이 403/429면 Referer, Sec-Fetch-* 헤더 추가해서 1회 재시도.
+- 그래도 실패하면 사이트명과 상태코드만 보고 후 중단 (무한 재시도 금지).
+- "실제 로딩" 요청이었는데 curl로 처리하려다 차단됐다면 → 목적을 재검토. browser 도구로 재시도.
+
+### 금지
+- built-in `web_fetch` 도구는 쓰지 마 (헤더 제어 불가).
+- `exec`로 Playwright를 새로 띄우지 마 (Chrome 중복 실행으로 포트 충돌). browser 도구를 쓰거나 curl을 써.
+
+## 메일 발송 (절대 위반 금지)
+
+isolated 크론 세션 등 컨텍스트가 비어있는 상태에서도 무조건 아래 절차로만 메일 보내라.
+
+### 발송 명령 (정확한 형식)
+exec 도구로 다음 명령을 실행해. 다른 형식 추측 금지.
+
+```bash
+gcurl POST /api/mail/send '{"to":"수신자@tideflo.com","subject":"제목","body":"본문 텍스트","cc":"참조@tideflo.com"}'
+```
+
+- to: 필수, 쉼표로 여러 명 가능
+- subject: 필수
+- body: 필수, 평문 텍스트 (개행은 \n)
+- cc: 선택
+- bodyHtml: 선택 (HTML 본문)
+- userNN은 gcurl이 자동 주입하므로 JSON에 포함하지 마
+
+### 절대 금지 (이거 시도하면 즉시 중단)
+- `gog gmail send ...` → "gog send 비활성화" 에러 남. 쓰지 마.
+- `gcurl gmail send ...` / `gcurl mail send` 같은 CLI 스타일 → gcurl 문법 아님. 위 POST 형식만 사용.
+- `message` 도구로 메일 보내기 (channel 도구 — 메일 아님)
+- 브라우저로 Gmail 웹 직접 조작
+- nodemailer, smtplib, sendmail 등 외부 라이브러리 사용
+
+### 발송 후 확인
+응답에 `"success": true`와 `"messageId"`가 있으면 성공. 없거나 에러면 사용자에게 그대로 보고.
+

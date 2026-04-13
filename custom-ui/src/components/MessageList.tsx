@@ -12,6 +12,14 @@ function trimFileContent(content: string): string {
   return content.replace(/(\[파일:\s*[^\]]+\])\n[\s\S]*?(?=\n*\[파일:|$)/g, '$1');
 }
 
+/* cron 실행 메시지에서 [cron:...] 프리픽스와 Current time 라인을 제거 */
+function stripCronPrefix(content: string): string {
+  if (!content) return content;
+  let out = content.replace(/^\[cron:[^\]]*\]\s*/, '');
+  out = out.replace(/^Current time:[^\n]*\n?/gm, '');
+  return out.replace(/^\n+/, '').trimEnd();
+}
+
 function ElapsedTimer({ startTime }: { startTime: Date }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -112,6 +120,20 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
         </div>
       ) : (
         messages.filter(m => {
+          // role과 무관하게 툴 원시 덤프 전역 필터 (새로 추가)
+          {
+            const t = (m.content || '').trim();
+            if (t.startsWith('{')) {
+              if (t.includes('"cdpPort"') || t.includes('"cdpReady"') || t.includes('"userDataDir"')) return false;
+              if (t.includes('"targetId"') && t.includes('"url"')) return false;
+              if (t.includes('"navigation"') && t.includes('"ttfb"')) return false;
+              if (t.includes('"loadComplete"') || t.includes('"paint"') && t.includes('"fp"')) return false;
+              if (t.includes('"ok":true') && t.includes('"messageId"')) return false;
+              if (t.includes('"byType"') || t.includes('"resource_count"') || t.includes('"totalRequests"')) return false;
+              // 200자 이상 JSON인데 한글 없음 → 툴 결과일 가능성 큼
+              if (/^\{[\s\S]*\}$/.test(t) && t.length > 200 && !/[가-힣]/.test(t)) return false;
+            }
+          }
           if (m.role === 'system') {
             const c = m.content;
             if (c.includes('작업 중...') || c.includes('완료')) return true;
@@ -126,6 +148,16 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
             if (t.includes('"modelApplied"') && t.includes('"runId"')) return false;
             if (t.includes('Successfully wrote') && t.includes('bytes to')) return false;
             if (t === 'Source: memory/' || /^Source: memory\//.test(t)) return false;
+            // browser 도구 상태 덤프
+            if (t.startsWith('{') && (t.includes('"cdpPort"') || t.includes('"cdpReady"') || t.includes('"userDataDir"'))) return false;
+            // browser 페이지 이동 결과 (targetId + url 덩어리)
+            if (t.startsWith('{') && t.includes('"targetId"') && t.includes('"url"')) return false;
+            // Performance API 원시 결과
+            if (t.startsWith('{') && (t.includes('"navigation"') && t.includes('"ttfb"') || t.includes('"loadComplete"') || t.includes('"paint"'))) return false;
+            // gcurl/API 원시 응답
+            if (t.startsWith('{') && t.includes('"ok":true') && t.includes('"messageId"')) return false;
+            // 일반적 JSON 툴 결과 (key가 많고 본문에 설명 없음)
+            if (/^\{[\s\S]*\}$/.test(t) && t.length > 200 && !/[가-힣]/.test(t)) return false;
           }
           if (m.role === 'assistant' && !m.isLoading && m.content.trim().length < 2) return false;
           return true;
@@ -241,7 +273,7 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
                         </ReactMarkdown>
                       </div>
                     ) : (
-                      <p className="whitespace-pre-wrap leading-relaxed">{trimFileContent(message.content)}</p>
+                      <p className="whitespace-pre-wrap leading-relaxed">{stripCronPrefix(trimFileContent(message.content))}</p>
                     )}
                   </div>
 
