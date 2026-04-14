@@ -1153,6 +1153,163 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/g2b/history
+  // Body: { agency(=dminsttNm), agencyCode(=dminsttCd), businessType("용역"|"물품"|"공사"|"외자"),
+  //         yearsBack(=3), fromDate(YYYY-MM-DD), toDate(YYYY-MM-DD),
+  //         ntceInsttNm, ntceInsttCd, bidNtceNm, indstrytyNm,
+  //         pageSize(100), maxPages(20) }
+  if (req.method === 'POST' && url.pathname === '/api/g2b/history') {
+    try {
+      const body = await parseBody(req) || {};
+      const {
+        agency, agencyCode,
+        businessType = '용역',
+        yearsBack = 3, fromDate, toDate,
+        ntceInsttNm, ntceInsttCd, bidNtceNm, indstrytyNm,
+        pageSize = 100, maxPages = 20,
+      } = body;
+
+      const G2B_KEY = process.env.G2B_SERVICE_KEY || '';
+      if (!G2B_KEY) { jsonRes(res, 500, { ok: false, error: 'G2B_SERVICE_KEY not configured' }); return; }
+
+      // 업무 분야 → 메서드 (개찰결과 PPS검색이 사전 필터 + 낙찰자 정보 풍부)
+      const methodMap = {
+        '물품': 'getOpengResultListInfoThngPPSSrch',
+        '공사': 'getOpengResultListInfoCnstwkPPSSrch',
+        '용역': 'getOpengResultListInfoServcPPSSrch',
+        '외자': 'getOpengResultListInfoFrgcptPPSSrch',
+      };
+      const method = methodMap[businessType];
+      if (!method) {
+        jsonRes(res, 400, { ok: false, error: `Invalid businessType: ${businessType}. Use one of: ${Object.keys(methodMap).join(', ')}` });
+        return;
+      }
+
+      // 기간 계산 (Date 객체)
+      let from, to;
+      if (fromDate && toDate) {
+        from = new Date(fromDate + 'T00:00:00');
+        to   = new Date(toDate   + 'T23:59:59');
+      } else {
+        const now = new Date();
+        const curYear = now.getFullYear();
+        from = new Date(`${curYear - yearsBack}-01-01T00:00:00`);
+        to   = new Date(`${curYear - 1}-12-31T23:59:59`);
+      }
+
+      // 1개월씩 청크 분할
+      const chunks = [];
+      let cur = new Date(from.getTime());
+      while (cur < to) {
+        const chunkEnd = new Date(cur.getTime());
+        chunkEnd.setMonth(chunkEnd.getMonth() + 1);
+        chunkEnd.setDate(chunkEnd.getDate() - 1);
+        chunkEnd.setHours(23, 59, 59);
+        const e = chunkEnd > to ? to : chunkEnd;
+        const fmt = d => d.getFullYear().toString() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
+        chunks.push({ bgn: fmt(cur), end: fmt(e) });
+        cur = new Date(e.getTime());
+        cur.setSeconds(cur.getSeconds() + 1);
+      }
+
+      const baseUrl = 'https://apis.data.go.kr/1230000/as/ScsbidInfoService/' + method;
+      const cappedPageSize = Math.max(1, Math.min(999, parseInt(pageSize, 10) || 100));
+      const cappedMaxPagesPerChunk = Math.max(1, Math.min(50, parseInt(maxPages, 10) || 20));
+
+      const collected = [];
+      let totalApiCalls = 0;
+      let totalFetched = 0;
+      let stoppedReason = 'end';
+
+      chunkLoop:
+      for (const chunk of chunks) {
+        for (let page = 1; page <= cappedMaxPagesPerChunk; page++) {
+          const params = new URLSearchParams({
+            serviceKey: G2B_KEY,
+            pageNo: String(page),
+            numOfRows: String(cappedPageSize),
+            type: 'json',
+            inqryDiv: '1', // 등록일시 기준
+            inqryBgnDt: chunk.bgn,
+            inqryEndDt: chunk.end,
+          });
+          if (agency)       params.set('dminsttNm', agency);
+          if (agencyCode)   params.set('dminsttCd', agencyCode);
+          if (ntceInsttNm)  params.set('ntceInsttNm', ntceInsttNm);
+          if (ntceInsttCd)  params.set('ntceInsttCd', ntceInsttCd);
+          if (bidNtceNm)    params.set('bidNtceNm', bidNtceNm);
+          if (indstrytyNm)  params.set('indstrytyNm', indstrytyNm);
+
+          const reqUrl = baseUrl + '?' + params.toString();
+          totalApiCalls++;
+          const apiRes = await new Promise((resolve, reject) => {
+            https.get(reqUrl, r => {
+              let data = '';
+              r.on('data', c => { data += c; });
+              r.on('end', () => resolve({ status: r.statusCode, body: data }));
+            }).on('error', reject);
+          });
+
+          if (apiRes.status !== 200) {
+            jsonRes(res, apiRes.status, { ok: false, error: `G2B API HTTP ${apiRes.status}`, body: apiRes.body.slice(0, 300), chunk, page });
+            return;
+          }
+          let parsed;
+          try { parsed = JSON.parse(apiRes.body); } catch {
+            jsonRes(res, 502, { ok: false, error: 'G2B API non-JSON', body: apiRes.body.slice(0, 300), chunk, page });
+            return;
+          }
+
+          const respBody = parsed?.response?.body;
+          if (!respBody) {
+            // 에러 응답일 수 있음
+            const errHdr = parsed?.['nkoneps.com.response.ResponseError']?.header;
+            jsonRes(res, 502, { ok: false, error: errHdr ? `G2B: ${errHdr.resultMsg}` : 'Unexpected response', body: apiRes.body.slice(0, 300), chunk });
+            return;
+          }
+          const items = respBody.items || [];
+          totalFetched += items.length;
+          for (const it of items) {
+            // opengCorpInfo: "회사명^사업자번호^대표자^낙찰금액^?"
+            const corpInfo = (it.opengCorpInfo || '').split('^');
+            collected.push({
+              bidNtceNo: it.bidNtceNo,
+              bidNtceNm: it.bidNtceNm,
+              opengDt: it.opengDt || it.opengDate,
+              dminsttCd: it.dminsttCd,
+              dminsttNm: it.dminsttNm || it.dmndInsttNm,
+              ntceInsttNm: it.ntceInsttNm,
+              prtcptCnum: it.prtcptCnum,
+              progrsDivCdNm: it.progrsDivCdNm,
+              winnerName: corpInfo[0] || null,
+              winnerBizno: corpInfo[1] || null,
+              winnerCeo: corpInfo[2] || null,
+              winnerAmt: corpInfo[3] || null,
+            });
+          }
+          if (items.length < cappedPageSize) break; // 이 청크 완료
+          if (page >= cappedMaxPagesPerChunk) { stoppedReason = 'maxPagesPerChunk'; break chunkLoop; }
+        }
+      }
+
+      jsonRes(res, 200, {
+        ok: true,
+        method, businessType,
+        period: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+        filters: { agency, agencyCode, ntceInsttNm, ntceInsttCd, bidNtceNm, indstrytyNm },
+        chunks: chunks.length,
+        totalApiCalls,
+        totalFetched,
+        items: collected,
+        stoppedReason,
+      });
+    } catch (err) {
+      console.error('[g2b] history error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   // GET /api/drive/read?userNN=01&fileId=xxx
   if (req.method === 'GET' && url.pathname === '/api/drive/read') {
     try {

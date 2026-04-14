@@ -440,3 +440,112 @@ gcurl POST /api/drive/advanced-search '{"modifiedAfter":"2026-04-06","modifiedBy
 - 여러 공유 드라이브 한 번에 스캔
 - 단순 조회는 기존 `gog drive search` 또는 `gog drive recent N` 사용
 
+## 나라장터 낙찰 이력 조회 (G2B)
+
+발주기관 과거 낙찰 이력 조회 시 사용. 제안서 검토 시 "이 발주처는 최근 N년간 누가 따냈는지" 분석에 활용.
+
+### 사용법
+```bash
+gcurl POST /api/g2b/history '{"agency":"한국저작권위원회","businessType":"용역","yearsBack":3}'
+```
+
+### 파라미터
+- `agency`: 발주기관명 정확히 (= 수요기관 dminsttNm)
+- `agencyCode`: 수요기관 코드 (있으면 더 정확, 예: "B552546")
+- `businessType`: "물품" / "공사" / "용역" / "외자" (기본 "용역")
+- `yearsBack`: 현재 연도 제외 N년 (기본 3)
+- `fromDate` / `toDate`: "YYYY-MM-DD" (직접 지정 시 yearsBack 무시)
+- `ntceInsttNm` / `ntceInsttCd`: 공고기관명/코드 (선택)
+- `bidNtceNm`: 사업명 부분 일치 (선택)
+- `indstrytyNm`: 업종명 (선택)
+- `pageSize`: 기본 100, 최대 999
+- `maxPages`: 청크당 최대 페이지 (기본 20)
+
+### 응답
+```json
+{
+  "ok": true,
+  "method": "getOpengResultListInfoServcPPSSrch",
+  "businessType": "용역",
+  "period": {"from": "2023-01-01", "to": "2025-12-31"},
+  "chunks": 36, "totalApiCalls": 36, "totalFetched": 278,
+  "items": [
+    {
+      "bidNtceNo": "...",
+      "bidNtceNm": "사업명",
+      "opengDt": "2024-03-15 11:00:00",
+      "dminsttCd": "B552546",
+      "dminsttNm": "한국저작권위원회",
+      "ntceInsttNm": "조달청 ...",
+      "prtcptCnum": "5",
+      "progrsDivCdNm": "개찰완료",
+      "winnerName": "회사명",
+      "winnerBizno": "사업자번호",
+      "winnerCeo": "대표자",
+      "winnerAmt": "낙찰금액(원)"
+    }
+  ],
+  "stoppedReason": "end"
+}
+```
+
+### 동작 특성
+- 내부적으로 1개월씩 청크 분할 후 자동 호출 (PPS 검색 1개월 제한 우회)
+- 3년 = 36회 호출, 일일 한도 1000건이라 충분
+- `progrsDivCdNm`이 "개찰완료" 아니면 winnerName 비어있을 수 있음 (유찰/재입찰)
+
+### 언제 쓰나
+- 새 RFP 분석 시 "이 발주처 과거 낙찰 패턴" 파악
+- 경쟁사가 자주 따내는 사업 확인
+- 낙찰가 평균/추정가 비교
+- 입찰 추천도 평가의 근거 자료
+
+### 결과 가공
+items 받으면 다음과 같이 집계해서 보고:
+- 수정자별 낙찰 건수 Top 5 (반복 낙찰 = 유력 경쟁사)
+- 평균/총 낙찰금액
+- 사업 유형 클러스터링 (사업명 키워드 빈도)
+- 진행 중/완료 비율
+
+## 🚨 도구 선택 절대 규칙 (위반 금지)
+
+요청 분석 → 아래 우선순위 순서로 사용. **상위 단계가 가능하면 절대 하위 단계로 내려가지 마**.
+
+### 1순위: 사내 전용 API (gcurl)
+다음 데이터 조회는 **무조건** 해당 엔드포인트 사용. web_search·browser·gog 다 금지.
+
+| 데이터 종류 | 엔드포인트 |
+|------------|-----------|
+| 메일 발송/검색/읽기 | mail_send, mail_search, mail_read 도구 또는 `gcurl /api/mail/*` |
+| Google Drive 파일 검색 (날짜·수정자·키워드) | `gcurl POST /api/drive/advanced-search` |
+| 나라장터 낙찰 이력 | `gcurl POST /api/g2b/history` |
+| 도레이 작업 조회 | `gog dooray ...` 또는 dooray 도구 |
+| RAG 검색 (사내 문서 의미적) | `rag_search` 도구 |
+
+**예시 트리거:**
+- "발주처 ○○의 과거 낙찰" / "○○가 따낸 사업" → `gcurl /api/g2b/history` (web_search 금지)
+- "○○ 수정한 파일" / "○○ 이후 변경된 문서" → `gcurl /api/drive/advanced-search`
+- "○○ 회사 메일 보내" → mail_send
+
+### 2순위: 컨테이너 내부 도구
+- `exec` (curl, jq, python 등)
+- `read`, `write` (로컬 파일)
+- `browser` (실제 사용자 화면 측정·JS 렌더링·로그인 필요한 사이트)
+
+### 3순위 (최후 수단): web_search
+**아래 경우에만**:
+- 사내 API로 조회 불가능한 일반 정보 (날씨, 뉴스, 공개 사실)
+- 1순위·2순위 다 실패한 후 사용자에게 보고하기 전 추가 확인
+
+**❌ web_search 금지 케이스:**
+- 사내 데이터 (메일, Drive, 도레이, 나라장터 등) — 1순위 도구 있음
+- 결정적 답이 필요한 경우 — 검색 결과는 부정확할 수 있음
+- 사용자가 "API 써", "정확히 조회해", "데이터 가져와" 요청한 경우
+
+### 판단 흐름
+1. 요청이 "1순위 데이터" 카테고리에 해당하나? → 해당 엔드포인트 즉시 사용
+2. 아니면 `exec`/`browser`로 처리 가능? → 사용
+3. 둘 다 안 되면 → web_search
+
+**드리프트 방지**: 답이 안 보일 때 web_search로 도망가지 마. **1순위 엔드포인트 다시 확인** → 그래도 결과 없으면 사용자에게 솔직히 보고 (지어내기 금지).
+

@@ -1,0 +1,17 @@
+{
+  "id": "g2b",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable G2B Tools"
+    }
+  }
+}
