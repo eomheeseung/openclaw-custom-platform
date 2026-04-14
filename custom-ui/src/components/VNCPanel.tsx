@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Monitor, Play, Copy, Loader2, CheckCircle, X } from 'lucide-react';
+import { Monitor, Play, Copy, Loader2, CheckCircle, X, RotateCcw } from 'lucide-react';
 
 interface VNCPanelProps {
   token: string;
   onClose: () => void;
 }
 
-async function callVncApi(action: 'status' | 'start', userNN: string): Promise<Record<string, unknown>> {
+async function callVncApi(action: 'status' | 'start' | 'restart-chrome', userNN: string): Promise<Record<string, unknown>> {
   const res = await fetch(`/api/vnc/${action}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -62,6 +62,9 @@ export function VNCPanel({ token, onClose }: VNCPanelProps) {
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [copied, setCopied] = useState(false);
+  const [chromeRestarting, setChromeRestarting] = useState(false);
+  const [chromeAlive, setChromeAlive] = useState<boolean | null>(null);
+  const [vncAlive, setVncAlive] = useState<boolean | null>(null);
 
   const resetSteps = () => setSteps({ check: 'pending', start: 'pending', wait: 'pending', open: 'pending' });
   const patch = (k: StepKey, v: StepState) => setSteps(prev => ({ ...prev, [k]: v }));
@@ -69,9 +72,27 @@ export function VNCPanel({ token, onClose }: VNCPanelProps) {
   const execCheck = async (): Promise<boolean> => {
     if (slot === null) return false;
     const data = await callVncApi('status', slotToStr(slot));
+    const running = (data as { running?: boolean }).running === true;
+    const chrome = (data as { chrome?: boolean }).chrome === true;
+    setVncAlive(running);
+    setChromeAlive(chrome);
     // VNC + Chrome 둘 다 떠있어야 완료된 것으로 간주
-    return (data as { running?: boolean; chrome?: boolean }).running === true
-      && (data as { chrome?: boolean }).chrome === true;
+    return running && chrome;
+  };
+
+  const restartChrome = async () => {
+    if (slot === null) return;
+    setChromeRestarting(true);
+    setErrorMsg('');
+    try {
+      await callVncApi('restart-chrome', slotToStr(slot));
+      // 상태 재확인
+      await execCheck();
+    } catch (e) {
+      setErrorMsg('Chrome 재시작 실패: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setChromeRestarting(false);
+    }
   };
 
   const execStart = async () => {
@@ -237,13 +258,29 @@ export function VNCPanel({ token, onClose }: VNCPanelProps) {
             <div className="flex gap-2">
               <button
                 onClick={run}
-                disabled={busy}
+                disabled={busy || chromeRestarting}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm disabled:opacity-60"
               >
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 {allDone ? '다시 열기' : '원격 데스크톱 열기'}
               </button>
+              {vncAlive && !chromeAlive && (
+                <button
+                  onClick={restartChrome}
+                  disabled={chromeRestarting || busy}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-amber-500/90 hover:bg-amber-500 text-white rounded-lg text-sm disabled:opacity-60"
+                  title="Chrome 프로세스만 재시작 (VNC 유지)"
+                >
+                  {chromeRestarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                  Chrome 재시작
+                </button>
+              )}
             </div>
+            {vncAlive && !chromeAlive && !errorMsg && (
+              <div className="text-xs text-amber-500 bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg">
+                ⚠ VNC는 떠있지만 Chrome이 죽어있어요. "Chrome 재시작" 버튼으로 복구하거나 VNC 새로고침 후 확인해보세요.
+              </div>
+            )}
 
             <p className="text-xs text-text-secondary leading-relaxed">
               로그인이 필요한 사이트를 모니터링하려면, VNC로 접속해서 Chrome에 미리 로그인해 두세요.<br />

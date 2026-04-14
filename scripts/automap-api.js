@@ -684,27 +684,73 @@ const server = http.createServer(async (req, res) => {
     const { userNN } = params;
     if (!validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
     // 1단계: VNC 프로세스 (포트 점유 여부로 판정, 좀비 제외)
-    const vncCmd = 'netstat -tlnp 2>/dev/null | grep -q ":6080 " && { echo ALREADY; exit 0; }; ' +
+    //        좀비 chrome/Xvfb 먼저 정리
+    const vncCmd = 'ZOMBIES=$(ps -eo pid,stat,comm | awk \'$2~/^Z/ && ($3~/chrome/||$3~/Xvfb/||$3~/x11vnc/||$3~/websockify/) {print $1}\' | head -20); ' +
+      '[ -n "$ZOMBIES" ] && kill -9 $ZOMBIES 2>/dev/null; sleep 0.3; ' +
+      'netstat -tlnp 2>/dev/null | grep -q ":6080 " && { echo ALREADY; exit 0; }; ' +
       'setsid Xvfb :99 -screen 0 1280x720x24 </dev/null >/dev/null 2>&1 & disown; sleep 1; ' +
       'setsid x11vnc -display :99 -nopw -forever -shared -rfbport 5900 </dev/null >/dev/null 2>&1 & disown; sleep 1; ' +
-      'setsid websockify --web /usr/share/novnc 6080 localhost:5900 </dev/null >/dev/null 2>&1 & disown; sleep 1; echo STARTED';
-    // 2단계: Chrome은 node 유저로 (프로필 권한 맞춤, 좀비 제외)
-    const chromeCmd = 'ps -eo stat,comm | grep -v "Z" | grep -q "chrome" && { echo CHROME_ALREADY; exit 0; }; ' +
-      'DISPLAY=:99 setsid google-chrome ' +
+      'setsid websockify --web /usr/share/novnc 6080 localhost:5900 </dev/null >/dev/null 2>&1 & disown; sleep 1; ' +
+      'for i in 1 2 3 4 5; do netstat -tlnp 2>/dev/null | grep -q ":6080 " && { echo STARTED; exit 0; }; sleep 0.5; done; echo TIMEOUT';
+    // 2단계: Chrome은 node 유저로 (프로필 권한 맞춤)
+    //        좀비 chrome 정리 + CDP 포트 18800 LISTEN 될 때까지 폴링
+    const chromeCmd = 'ZOMBIES=$(ps -eo pid,stat,comm | awk \'$2~/^Z/ && $3~/chrome/ {print $1}\' | head -20); ' +
+      '[ -n "$ZOMBIES" ] && kill -9 $ZOMBIES 2>/dev/null; sleep 0.3; ' +
+      'ps -eo stat,comm | grep -v "Z" | grep -q "chrome" && netstat -tlnp 2>/dev/null | grep -q ":18800 " && { echo CHROME_ALREADY; exit 0; }; ' +
+      'DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS=/dev/null setsid google-chrome ' +
       '--user-data-dir=/home/node/.openclaw/browser/openclaw/user-data ' +
       '--no-sandbox --no-first-run --no-default-browser-check ' +
       '--disable-session-crashed-bubble --disable-infobars ' +
-      '--disable-dev-shm-usage --disable-gpu ' +
-      '--disable-features=VizDisplayCompositor ' +
-      '--remote-debugging-port=18800 ' +
-      'https://www.google.com </dev/null >/dev/null 2>&1 & disown; sleep 1; echo CHROME_STARTED';
+      '--disable-dev-shm-usage --disable-gpu --disable-software-rasterizer ' +
+      '--disable-extensions --disable-plugins --disable-crash-reporter --disable-breakpad ' +
+      '--disable-features=VizDisplayCompositor,Translate ' +
+      '--remote-debugging-port=18800 --remote-debugging-address=127.0.0.1 ' +
+      'https://www.google.com </dev/null >/dev/null 2>&1 & disown; sleep 1; ' +
+      'for i in 1 2 3 4 5 6 7 8 9 10; do netstat -tlnp 2>/dev/null | grep -q ":18800 " && { echo CHROME_STARTED; exit 0; }; sleep 0.5; done; echo CHROME_TIMEOUT';
     execFile('docker', ['exec', '-u', 'root', `openclaw-user${userNN}`, 'bash', '-c', vncCmd],
-      { timeout: 15000 }, (err1, stdout1) => {
+      { timeout: 20000 }, (err1, stdout1) => {
         if (err1) { jsonRes(res, 500, { ok: false, error: 'VNC: ' + err1.message }); return; }
+        const vncOut = String(stdout1 || '').trim();
+        if (vncOut === 'TIMEOUT') { jsonRes(res, 500, { ok: false, error: 'VNC: websockify did not start (timeout)', vnc: vncOut }); return; }
         execFile('docker', ['exec', '-u', 'node', `openclaw-user${userNN}`, 'bash', '-c', chromeCmd],
-          { timeout: 15000 }, (err2, stdout2) => {
-            if (err2) { jsonRes(res, 500, { ok: false, error: 'Chrome: ' + err2.message, vnc: String(stdout1 || '').trim() }); return; }
-            jsonRes(res, 200, { ok: true, vnc: String(stdout1 || '').trim(), chrome: String(stdout2 || '').trim() });
+          { timeout: 20000 }, (err2, stdout2) => {
+            if (err2) { jsonRes(res, 500, { ok: false, error: 'Chrome: ' + err2.message, vnc: vncOut }); return; }
+            const chromeOut = String(stdout2 || '').trim();
+            if (chromeOut === 'CHROME_TIMEOUT') { jsonRes(res, 500, { ok: false, error: 'Chrome: CDP port 18800 did not listen within 5s', vnc: vncOut, chrome: chromeOut }); return; }
+            jsonRes(res, 200, { ok: true, vnc: vncOut, chrome: chromeOut });
+          });
+      });
+    return;
+  }
+
+  // POST /api/vnc/restart-chrome — kill & relaunch Chrome only (VNC stays)
+  if (req.method === 'POST' && url.pathname === '/api/vnc/restart-chrome') {
+    const params = await parseBody(req);
+    const { userNN } = params;
+    if (!validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    // pkill -f 가 자기 자신 shell을 매치하므로 PID 직접 찾아서 kill
+    const killCmd = 'PIDS=$(ps -eo pid,comm,args | awk \'$2~/^chrome/ && $0~/user-data-dir=\\/home\\/node\\/.openclaw/ {print $1}\'); ' +
+      '[ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null; ' +
+      'sleep 0.5; echo KILLED; exit 0';
+    const launchCmd = 'DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS=/dev/null setsid google-chrome ' +
+      '--user-data-dir=/home/node/.openclaw/browser/openclaw/user-data ' +
+      '--no-sandbox --no-first-run --no-default-browser-check ' +
+      '--disable-session-crashed-bubble --disable-infobars ' +
+      '--disable-dev-shm-usage --disable-gpu --disable-software-rasterizer ' +
+      '--disable-extensions --disable-plugins --disable-crash-reporter --disable-breakpad ' +
+      '--disable-features=VizDisplayCompositor,Translate ' +
+      '--remote-debugging-port=18800 --remote-debugging-address=127.0.0.1 ' +
+      'https://www.google.com </dev/null >/dev/null 2>&1 & disown; sleep 1; ' +
+      'for i in 1 2 3 4 5 6 7 8 9 10; do netstat -tlnp 2>/dev/null | grep -q ":18800 " && { echo CHROME_STARTED; exit 0; }; sleep 0.5; done; echo CHROME_TIMEOUT';
+    execFile('docker', ['exec', '-u', 'root', `openclaw-user${userNN}`, 'bash', '-c', killCmd],
+      { timeout: 10000 }, (err1) => {
+        if (err1) { jsonRes(res, 500, { ok: false, error: 'kill failed: ' + err1.message }); return; }
+        execFile('docker', ['exec', '-u', 'node', `openclaw-user${userNN}`, 'bash', '-c', launchCmd],
+          { timeout: 20000 }, (err2, stdout2) => {
+            if (err2) { jsonRes(res, 500, { ok: false, error: 'launch failed: ' + err2.message }); return; }
+            const out = String(stdout2 || '').trim();
+            if (out === 'CHROME_TIMEOUT') { jsonRes(res, 500, { ok: false, error: 'Chrome CDP timeout', chrome: out }); return; }
+            jsonRes(res, 200, { ok: true, chrome: out });
           });
       });
     return;

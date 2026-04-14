@@ -1,0 +1,17 @@
+{
+  "id": "drive-advanced",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable Drive Advanced Search"
+    }
+  }
+}

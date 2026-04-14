@@ -411,7 +411,7 @@ gcurl POST /api/mail/send '{"to":"수신자@tideflo.com","subject":"제목","bod
 
 ## Drive 고급 검색 (대규모/수정자·기간 필터)
 
-`gog drive search`는 단순 키워드만 지원해서 수정자·기간 범위 같은 정밀 조회는 불가능. 대규모·정밀 검색은 아래 엔드포인트를 써라.
+**`drive_search` 도구를 우선 사용하라** (공식 플러그인 도구). 날짜·수정자·본문 키워드 등 복합 조건 검색 시 자동 호출됨. 아래 gcurl 명령은 대체 경로.
 
 ### 사용법
 ```bash
@@ -517,8 +517,8 @@ items 받으면 다음과 같이 집계해서 보고:
 | 데이터 종류 | 엔드포인트 |
 |------------|-----------|
 | 메일 발송/검색/읽기 | mail_send, mail_search, mail_read 도구 또는 `gcurl /api/mail/*` |
-| Google Drive 파일 검색 (날짜·수정자·키워드) | `gcurl POST /api/drive/advanced-search` |
-| 나라장터 낙찰 이력 | `gcurl POST /api/g2b/history` |
+| Google Drive 파일 검색 (날짜·수정자·키워드) | **`drive_search` 도구** (백업: `gcurl POST /api/drive/advanced-search`) |
+| 나라장터 낙찰 이력 | **`g2b_history` 도구** (백업: `gcurl POST /api/g2b/history`) |
 | 도레이 작업 조회 | `gog dooray ...` 또는 dooray 도구 |
 | RAG 검색 (사내 문서 의미적) | `rag_search` 도구 |
 
