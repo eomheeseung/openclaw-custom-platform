@@ -448,11 +448,18 @@ function BottomStats({ agents, sessions, todayCompleted, apiCallCount, connected
 }
 
 // --- Main Dashboard ---
+function activityLogKey(): string {
+  try {
+    const t = new URLSearchParams(window.location.search).get('token') || '';
+    const m = t.match(/user(\d+)/i);
+    return `tideclaw-activity-log-${m ? m[1].padStart(2, '0') : 'default'}`;
+  } catch { return 'tideclaw-activity-log-default'; }
+}
 export function Dashboard({ sendRequest, agents, sessions: propSessions, messages, connectionStatus, apiCallCount, onNavigateToChat }: DashboardProps) {
   const [cronRuns, setCronRuns] = useState<CronRun[]>([]);
   const [activityFeed, setActivityFeed] = useState<ActivityEntry[]>(() => {
     try {
-      const saved = localStorage.getItem('tideclaw-activity-log');
+      const saved = localStorage.getItem(activityLogKey());
       if (saved) {
         const parsed = JSON.parse(saved) as ActivityEntry[];
         // timestamp를 Date로 복원 + 오래된 in-progress를 자동 완료 처리
@@ -475,7 +482,7 @@ export function Dashboard({ sendRequest, agents, sessions: propSessions, message
   // activityFeed 변경 시 localStorage에 저장
   useEffect(() => {
     try {
-      localStorage.setItem('tideclaw-activity-log', JSON.stringify(activityFeed));
+      localStorage.setItem(activityLogKey(), JSON.stringify(activityFeed));
     } catch { /* ignore */ }
   }, [activityFeed]);
 
@@ -661,7 +668,7 @@ export function Dashboard({ sendRequest, agents, sessions: propSessions, message
         <div className="w-80 xl:w-96 border-l border-gray-800/30 p-4 flex-shrink-0 overflow-hidden">
           <ActivityLog feed={activityFeed} cronRuns={cronRuns} onClickEntry={onNavigateToChat} onClear={async () => {
             setActivityFeed([]);
-            localStorage.removeItem('tideclaw-activity-log');
+            localStorage.removeItem(activityLogKey());
             try {
               await sendRequest('tools.invoke' as string, { tool: 'exec', args: { command: 'rm -f /home/node/.openclaw/cron/runs/*.jsonl' } });
             } catch { /* ignore */ }

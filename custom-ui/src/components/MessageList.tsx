@@ -53,9 +53,16 @@ interface MessageListProps {
 
 export function MessageList({ messages, agents = [] }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && isAtBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
@@ -110,6 +117,7 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
   return (
     <div
       ref={scrollRef}
+      onScroll={handleScroll}
       className="flex-1 overflow-y-auto scrollbar-thin px-6 py-5 space-y-5"
     >
       {messages.length === 0 ? (

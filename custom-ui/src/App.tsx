@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Network, Bot, Clock, HelpCircle, MessageSquare, LayoutDashboard, Link, Search, Pin, ExternalLink, Settings, Monitor } from 'lucide-react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { LoginScreen } from './components/LoginScreen';
@@ -12,10 +12,11 @@ import { Dashboard } from './components/Dashboard';
 import { AdminPanel } from './components/AdminPanel';
 import { HelpModal } from './components/HelpModal';
 import { VNCPanel } from './components/VNCPanel';
+import { WorkflowView } from './components/WorkflowView';
 import { IntegrationsPage } from './components/IntegrationsPage';
 import type { Agent, Session } from './types';
 
-type ViewType = 'dashboard' | 'chat' | 'agents' | 'cron' | 'channels' | 'integrations';
+type ViewType = 'dashboard' | 'chat' | 'agents' | 'cron' | 'channels' | 'integrations' | 'workflow';
 
 function getGatewayUrl(token: string): string {
   const match = token.match(/user(\d+)/);
@@ -39,14 +40,52 @@ const dockItems: { key: ViewType; icon: string; label: string }[] = [
   { key: 'dashboard',    icon: '📊', label: '대시보드' },
   { key: 'agents',       icon: '🤖', label: '에이전트' },
   { key: 'cron',         icon: '⏰', label: '예약 작업' },
+  { key: 'workflow',     icon: '📋', label: '워크플로' },
   { key: 'channels',     icon: '📡', label: '채널 연동' },
   { key: 'integrations', icon: '🔗', label: '외부 연동' },
 ];
 
 function App() {
   const [token, setToken] = useState<string>('');
-  const [currentView, setCurrentView] = useState<ViewType>('dashboard');
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  // 1회 마이그레이션: 네임스페이스 없는 옛 키 제거 (이전엔 모든 유저가 공유)
+  useEffect(() => {
+    try {
+      const migrated = localStorage.getItem('tideclaw-ns-migrated-v1');
+      if (!migrated) {
+        ['tideclaw-current-view', 'tideclaw-workflow-pins', 'tideclaw-workflow-catalog-collapsed', 'tideclaw-activity-log']
+          .forEach(k => localStorage.removeItem(k));
+        localStorage.setItem('tideclaw-ns-migrated-v1', '1');
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const viewStorageKey = (() => {
+    const m = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') || '' : '').match(/user(\d+)/i);
+    const slot = m ? m[1].padStart(2, '0') : 'default';
+    return `tideclaw-current-view-${slot}`;
+  })();
+  const [currentView, _setCurrentView] = useState<ViewType>(() => {
+    try {
+      const saved = localStorage.getItem(viewStorageKey);
+      const valid: ViewType[] = ['dashboard', 'chat', 'agents', 'cron', 'channels', 'integrations', 'workflow'];
+      if (saved && valid.includes(saved as ViewType)) return saved as ViewType;
+    } catch { /* ignore */ }
+    return 'dashboard';
+  });
+  const setCurrentView = useCallback((v: ViewType) => {
+    _setCurrentView(v);
+    try { localStorage.setItem(viewStorageKey, v); } catch { /* ignore */ }
+  }, [viewStorageKey]);
+  const slotForKey = (() => {
+    const m = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') || '' : '').match(/user(\d+)/i);
+    return m ? m[1].padStart(2, '0') : 'default';
+  })();
+  const [selectedAgent, _setSelectedAgent] = useState<Agent | null>(null);
+  const setSelectedAgent = useCallback((a: Agent | null) => {
+    _setSelectedAgent(a);
+    try { localStorage.setItem(`tideclaw-selected-agent-${slotForKey}`, a?.id || ''); } catch { /* ignore */ }
+  }, [slotForKey]);
+  const sessionRestoredRef = useRef(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showVNC, setShowVNC] = useState(false);
 
@@ -97,6 +136,19 @@ function App() {
     deleteSession, stopChat, isLoading, apiCallCount, sendRequest, fetchAgents,
   } = useWebSocket({ url: token ? getGatewayUrl(token) : '', token });
 
+  // 에이전트 로드되면 저장된 selectedAgent.id 복원
+  useEffect(() => {
+    if (selectedAgent || agents.length === 0) return;
+    try {
+      const savedId = localStorage.getItem(`tideclaw-selected-agent-${slotForKey}`);
+      if (savedId) {
+        const found = agents.find(a => a.id === savedId);
+        if (found) _setSelectedAgent(found);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agents]);
+
   const handleSelectAgent = useCallback((agent: Agent) => {
     setSelectedAgent(agent); setCurrentView('chat'); createSession(agent.id);
   }, [createSession]);
@@ -116,6 +168,25 @@ function App() {
   }, [agents, switchSession, resolveAgentFromSessionKey]);
 
   const handleCreateSession = useCallback(() => { createSession(selectedAgent?.id); }, [createSession, selectedAgent]);
+
+  // 세션 ID 저장
+  useEffect(() => {
+    try {
+      if (currentSession) localStorage.setItem(`tideclaw-current-session-${slotForKey}`, currentSession);
+    } catch { /* ignore */ }
+  }, [currentSession, slotForKey]);
+
+  // 세션 복원 (sessions 로드되면 1회)
+  useEffect(() => {
+    if (sessionRestoredRef.current || sessions.length === 0 || currentSession) return;
+    try {
+      const savedSk = localStorage.getItem(`tideclaw-current-session-${slotForKey}`);
+      if (savedSk && sessions.find(s => s.sessionKey === savedSk)) {
+        switchSession(savedSk);
+        sessionRestoredRef.current = true;
+      }
+    } catch { /* ignore */ }
+  }, [sessions, currentSession, slotForKey, switchSession]);
 
   if (!token) return <LoginScreen onLogin={handleLogin} />;
 
@@ -180,13 +251,16 @@ function App() {
                   ? 'bg-accent/10 text-accent'
                   : 'text-text-secondary hover:bg-accent/5 hover:text-accent'
                 }`}
-              title={item.label}
             >
               {/* Active indicator */}
               {currentView === item.key && (
                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-accent rounded-r-full" />
               )}
               <span>{item.icon}</span>
+              {/* Tooltip */}
+              <span className="absolute left-full ml-2 px-2 py-1 bg-card border border-border-color text-text-primary text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-sm">
+                {item.label}
+              </span>
             </button>
           ))}
 
@@ -195,23 +269,29 @@ function App() {
           <div className="w-7 h-px bg-border-color my-2" />
           <button
             onClick={() => setShowVNC(true)}
-            className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all"
-            title="원격 데스크톱 (VNC)"
+            className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all relative group"
           >
             <Monitor className="w-5 h-5" />
+            <span className="absolute left-full ml-2 px-2 py-1 bg-card border border-border-color text-text-primary text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-sm">
+              원격 데스크톱
+            </span>
           </button>
           <button
             onClick={() => setShowHelp(true)}
-            className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all"
-            title="도움말"
+            className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all relative group"
           >
             <HelpCircle className="w-5 h-5" />
+            <span className="absolute left-full ml-2 px-2 py-1 bg-card border border-border-color text-text-primary text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-sm">
+              도움말
+            </span>
           </button>
           <button
-            className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all"
-            title="설정"
+            className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary hover:text-accent hover:bg-accent/5 transition-all relative group"
           >
             <Settings className="w-5 h-5" />
+            <span className="absolute left-full ml-2 px-2 py-1 bg-card border border-border-color text-text-primary text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-sm">
+              설정
+            </span>
           </button>
         </nav>
 
@@ -270,6 +350,17 @@ function App() {
             </>
           ) : currentView === 'agents' ? (
             <AgentManager sendRequest={sendRequest} onAgentsChanged={fetchAgents} token={token} />
+          ) : currentView === 'workflow' ? (
+            <WorkflowView
+              token={token}
+              onSendMessage={(text) => {
+                setCurrentView('chat');
+                const sec = agents.find(a => a.id === 'secretary') || agents[0];
+                if (sec && !selectedAgent) { setSelectedAgent(sec); createSession(sec.id); }
+                setTimeout(() => sendMessage(text), 200);
+              }}
+              onOpenVNC={() => setShowVNC(true)}
+            />
           ) : currentView === 'cron' ? (
             <CronManager sendRequest={sendRequest} agents={agents} />
           ) : currentView === 'channels' ? (

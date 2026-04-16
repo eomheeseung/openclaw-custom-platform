@@ -283,8 +283,7 @@ export function VNCPanel({ token, onClose }: VNCPanelProps) {
             )}
 
             <p className="text-xs text-text-secondary leading-relaxed">
-              로그인이 필요한 사이트를 모니터링하려면, VNC로 접속해서 Chrome에 미리 로그인해 두세요.<br />
-              Chrome 프로필은 자동으로 <code className="text-accent">/home/node/.openclaw/browser/openclaw/user-data</code> 를 사용합니다.
+              로그인이 필요한 사이트를 모니터링하려면, VNC로 접속해서 Chrome에 미리 로그인해 두세요.
             </p>
           </div>
         )}
