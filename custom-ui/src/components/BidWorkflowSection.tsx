@@ -62,6 +62,7 @@ export function BidWorkflowSection({ token, onSendMessage, onOpenVNC, onUnpin }:
   const [queueResults, setQueueResults] = useState<QueueBid[] | null>(null);
   const [queueMeta, setQueueMeta] = useState<{ totalElapsedMs?: number; detail?: string; error?: string } | null>(null);
   const [queueExpanded, setQueueExpanded] = useState<Record<string, boolean>>({});
+  const [batchSending, setBatchSending] = useState(false);
   const loggedIn = status.kind === 'logged-in';
   const todayStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\. /g, '-').replace('.', '');
 
@@ -79,12 +80,49 @@ export function BidWorkflowSection({ token, onSendMessage, onOpenVNC, onUnpin }:
     deep: { lines: '100줄+', bullets: '불릿 15개+ (각 항목 1~2문장 설명)', extra: '\n- 각 bid마다 sessions_spawn으로 개발봇/기획봇 호출해서 분야별 심층 분석 위임\n- 결과 종합해서 비서가 최종 리포트' },
   }[detail];
 
-  const sendSummarize = () => {
-    onSendMessage(`**bid_queue_summarize** 도구를 {"detail":"${detail}","concurrency":3} 파라미터로 딱 1번 호출해. 이 도구가 내부 큐로 동시 3개 병렬 요약을 자동 실행함. 다른 bid_* 도구, sessions_spawn, 배치 로직 일절 금지.
+  const sendSummarize = async () => {
+    if (!slot) return;
+    setBatchSending(true);
+    try {
+      // 배정 목록 미리 조회해서 배치 분할
+      const res = await fetch('/api/bid/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userNN: slotToStr(slot), status: 'assigned' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const bids: { bidRowId: string }[] = data?.ok && Array.isArray(data.bids) ? data.bids : [];
 
-결과 받으면 **각 bid의 summary 필드를 한 글자도 줄이지 말고 그대로 출력**. 축약·생략·"..." 표기 금지. 각 사업 간은 --- 로 구분.
-마지막에 비교표(사업명/예산/마감일/추천도) + 추천 순위 추가.
-browser·web_search 절대 금지.`);
+      if (bids.length === 0) {
+        // fallback: 기존 단일 호출
+        onSendMessage(`**bid_queue_summarize** 도구를 {"detail":"${detail}","concurrency":3} 파라미터로 1번 호출해. 결과를 그대로 출력. 축약·생략 금지.`);
+        return;
+      }
+
+      const BATCH = 2;
+      const batches: string[][] = [];
+      for (let i = 0; i < bids.length; i += BATCH) {
+        batches.push(bids.slice(i, i + BATCH).map(b => b.bidRowId));
+      }
+
+      const batchLines = batches.map((ids, i) =>
+        `배치${i + 1}: bid_queue_summarize_batch(bidRowIds=${JSON.stringify(ids)}, detail="${detail}") → 결과 즉시 출력`
+      ).join('\n');
+
+      onSendMessage(`오늘 배정된 입찰 총 ${bids.length}건을 배치별로 요약. **각 배치 호출 직후 summary를 즉시 채팅에 출력하고 다음 배치 진행**.
+
+${batchLines}
+
+모든 배치 완료 후: 전체 비교표(사업명/예산/마감일/추천도) + 추천 순위 1~${bids.length}위.
+
+규칙:
+- 각 배치 결과를 모아서 한 번에 출력 금지 — 배치별 즉시 출력
+- summary 필드를 한 글자도 줄이지 말고 그대로 출력 (축약·"..." 금지)
+- 각 사업 간 --- 구분
+- bid_queue_summarize, bid_summarize_assigned, sessions_spawn, browser, web_search 금지`);
+    } finally {
+      setBatchSending(false);
+    }
   };
   const sendDetailOne = () => {
     if (!bidQuery.trim()) return;
@@ -201,12 +239,12 @@ gcurl POST /api/mail/send '{"to":"${mailTo.trim()}","subject":"${subject}","body
             {/* A. 오늘 배정 요약 */}
             <button
               onClick={sendSummarize}
-              disabled={!loggedIn}
+              disabled={!loggedIn || batchSending}
               className="flex flex-col items-start gap-2 px-4 py-4 bg-accent/10 hover:bg-accent/20 border border-accent/30 rounded-lg text-left disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              <ListChecks className="w-5 h-5 text-accent" />
+              {batchSending ? <Loader2 className="w-5 h-5 text-accent animate-spin" /> : <ListChecks className="w-5 h-5 text-accent" />}
               <div className="text-sm font-medium text-text-primary">📋 오늘 배정 요약</div>
-              <div className="text-xs text-text-secondary">모든 입찰 한 번에 정리 + 비교표</div>
+              <div className="text-xs text-text-secondary">{batchSending ? '배치 분할 중...' : '배치별 순차 출력 + 비교표'}</div>
               <Send className="w-3.5 h-3.5 text-text-secondary mt-auto" />
             </button>
 
