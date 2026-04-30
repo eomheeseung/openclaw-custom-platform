@@ -1,0 +1,17 @@
+{
+  "id": "hwp",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable HWP Tools"
+    }
+  }
+}

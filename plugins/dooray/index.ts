@@ -98,7 +98,7 @@ const doorayPlugin = {
     api.registerTool({
       name: 'dooray_tasks',
       label: '두레이 업무 목록',
-      description: '특정 프로젝트의 업무 목록을 조회합니다. dooray_projects로 프로젝트 ID를 먼저 확인하세요. status: registered(등록), working(진행중), done(완료). memberIds/ccMemberIds로 담당자/참조자 필터 가능.',
+      description: '특정 프로젝트의 업무 목록을 조회합니다. dooray_projects로 프로젝트 ID를 먼저 확인하세요. status: registered(등록), working(진행중), done(완료). memberIds/ccMemberIds 미지정 시 본인 담당 업무만 자동 조회.',
       parameters: {
         type: 'object',
         required: ['projectId'],
@@ -107,8 +107,9 @@ const doorayPlugin = {
           size: { type: 'number', description: '조회 개수 (기본 20, 최대 100)' },
           page: { type: 'number', description: '페이지 번호 (0부터)' },
           status: { type: 'string', description: '업무 상태 필터: registered, working, done' },
-          memberIds: { type: 'string', description: '담당자 멤버 ID (dooray_member로 조회)' },
+          memberIds: { type: 'string', description: '담당자 멤버 ID. 생략 시 본인 자동 적용.' },
           ccMemberIds: { type: 'string', description: '참조자 멤버 ID (dooray_member로 조회)' },
+          allMembers: { type: 'boolean', description: '전체 멤버 업무 조회 (true 시 필터 미적용)' },
         },
       },
       async execute(_toolCallId, params) {
@@ -117,8 +118,21 @@ const doorayPlugin = {
           const page = params.page || 0;
           let path = `/api/dooray/tasks?userNN=${userNN}&projectId=${encodeURIComponent(params.projectId)}&size=${size}&page=${page}`;
           if (params.status) path += `&status=${encodeURIComponent(params.status)}`;
-          if (params.memberIds) path += `&memberIds=${encodeURIComponent(params.memberIds)}`;
-          if (params.ccMemberIds) path += `&ccMemberIds=${encodeURIComponent(params.ccMemberIds)}`;
+          if (params.allMembers) {
+            if (params.memberIds) path += `&memberIds=${encodeURIComponent(params.memberIds)}`;
+            if (params.ccMemberIds) path += `&ccMemberIds=${encodeURIComponent(params.ccMemberIds)}`;
+          } else {
+            if (params.memberIds) {
+              path += `&memberIds=${encodeURIComponent(params.memberIds)}`;
+            } else {
+              try {
+                const intResult = await apiRequest('GET', `/api/integrations/load?userNN=${userNN}`);
+                const ownMemberId = intResult?.data?.dooray?.memberId;
+                if (ownMemberId) path += `&memberIds=${encodeURIComponent(ownMemberId)}`;
+              } catch {}
+            }
+            if (params.ccMemberIds) path += `&ccMemberIds=${encodeURIComponent(params.ccMemberIds)}`;
+          }
           const result = await apiRequest('GET', path);
           if (!result.ok) return json({ error: result.error || '업무 조회 실패' });
           return json({ tasks: result.tasks, totalCount: result.totalCount, page: result.page, size: result.size });

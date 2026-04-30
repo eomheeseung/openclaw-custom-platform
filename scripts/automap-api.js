@@ -64,6 +64,48 @@ function refreshContainerIpMap() {
 refreshContainerIpMap();
 setInterval(refreshContainerIpMap, 60000); // refresh every 60s
 
+// ── rhwp helper ──────────────────────────────────────────────────────────────
+const RHWP_HELPER = path.join(__dirname, 'rhwp-helper.mjs');
+
+function hwpProcess(op, fileBase64, extra = {}) {
+  return new Promise((resolve, reject) => {
+    const input = JSON.stringify({ op, fileBase64, ...extra });
+    const child = require('child_process').spawn('node', [RHWP_HELPER], { timeout: 60000 });
+    let out = '', err = '';
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { err += d; });
+    child.on('close', (code) => {
+      try { resolve(JSON.parse(out)); }
+      catch { reject(new Error(`rhwp-helper 파싱 실패 (code ${code}): ${err || out}`)); }
+    });
+    child.on('error', reject);
+    child.stdin.write(input);
+    child.stdin.end();
+  });
+}
+
+// SVG 내보내기 저장 폴더 — 1시간 TTL 정리
+const SVG_EXPORT_BASE = '/opt/openclaw/data';
+function cleanupOldSvgExports() {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  try {
+    const users = fs.readdirSync(SVG_EXPORT_BASE).filter(d => d.startsWith('user'));
+    for (const user of users) {
+      const dir = path.join(SVG_EXPORT_BASE, user, 'workspace', 'hwp-exports');
+      if (!fs.existsSync(dir)) continue;
+      for (const file of fs.readdirSync(dir)) {
+        const fp = path.join(dir, file);
+        try {
+          const stat = fs.statSync(fp);
+          if (stat.mtimeMs < cutoff) fs.unlinkSync(fp);
+        } catch {}
+      }
+    }
+  } catch {}
+}
+cleanupOldSvgExports();
+setInterval(cleanupOldSvgExports, 60 * 60 * 1000);
+
 // Resolve actual userNN from request IP (override whatever bot sends)
 function resolveUserNN(req, paramUserNN) {
   const remoteIp = req.socket.remoteAddress?.replace('::ffff:', '') || '';
@@ -720,6 +762,78 @@ const server = http.createServer(async (req, res) => {
             jsonRes(res, 200, { ok: true, vnc: vncOut, chrome: chromeOut });
           });
       });
+    return;
+  }
+
+  // --- bid.tideflo.work helpers (docker exec로 컨테이너 내부 /opt/scripts/bid-fetch.js 실행) ---
+  async function runBidFetch(userNN, args, timeoutMs = 180000) {
+    return new Promise((resolve) => {
+      execFile('docker', ['exec', `openclaw-user${userNN}`, 'node', '/opt/scripts/bid-fetch.js', ...args],
+        { timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 }, (err, stdout) => {
+          if (err && !stdout) { resolve({ ok: false, error: err.message }); return; }
+          try { resolve(JSON.parse(stdout.toString().trim())); }
+          catch { resolve({ ok: false, error: 'parse fail', raw: stdout.toString().slice(0, 500) }); }
+        });
+    });
+  }
+  function resolveBidUserNN(params) {
+    const nn = params?.userNN;
+    if (nn && validateUserNN(nn)) return nn;
+    return null;
+  }
+
+  // GET/POST /api/bid/list?userNN=01&status=assigned
+  if (url.pathname === '/api/bid/list' && (req.method === 'GET' || req.method === 'POST')) {
+    const params = req.method === 'POST' ? (await parseBody(req)) : Object.fromEntries(url.searchParams);
+    const userNN = resolveBidUserNN(params);
+    if (!userNN) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    const status = params.status || '';
+    const r = await runBidFetch(userNN, ['list', status]);
+    jsonRes(res, r.ok ? 200 : 500, r);
+    return;
+  }
+
+  // GET/POST /api/bid/detail?userNN=01&bidRowId=3331
+  if (url.pathname === '/api/bid/detail' && (req.method === 'GET' || req.method === 'POST')) {
+    const params = req.method === 'POST' ? (await parseBody(req)) : Object.fromEntries(url.searchParams);
+    const userNN = resolveBidUserNN(params);
+    if (!userNN) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    if (!params.bidRowId) { jsonRes(res, 400, { ok: false, error: 'bidRowId required' }); return; }
+    const r = await runBidFetch(userNN, ['detail', String(params.bidRowId)]);
+    jsonRes(res, r.ok ? 200 : 500, r);
+    return;
+  }
+
+  // GET/POST /api/bid/document?userNN=01&docId=8858
+  if (url.pathname === '/api/bid/document' && (req.method === 'GET' || req.method === 'POST')) {
+    const params = req.method === 'POST' ? (await parseBody(req)) : Object.fromEntries(url.searchParams);
+    const userNN = resolveBidUserNN(params);
+    if (!userNN) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    if (!params.docId) { jsonRes(res, 400, { ok: false, error: 'docId required' }); return; }
+    const r = await runBidFetch(userNN, ['document', String(params.docId)]);
+    jsonRes(res, r.ok ? 200 : 500, r);
+    return;
+  }
+
+  // GET/POST /api/bid/assigned?userNN=01 — 종합 조회
+  if (url.pathname === '/api/bid/assigned' && (req.method === 'GET' || req.method === 'POST')) {
+    const params = req.method === 'POST' ? (await parseBody(req)) : Object.fromEntries(url.searchParams);
+    const userNN = resolveBidUserNN(params);
+    if (!userNN) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    const r = await runBidFetch(userNN, ['assigned']);
+    jsonRes(res, r.ok ? 200 : 500, r);
+    return;
+  }
+
+  // POST /api/bid/queue-summarize — 큐 기반 병렬 요약 (kimi 직접 호출, 동시 3개)
+  if (url.pathname === '/api/bid/queue-summarize' && req.method === 'POST') {
+    const params = await parseBody(req);
+    const userNN = resolveBidUserNN(params);
+    if (!userNN) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    const detail = params.detail === 'deep' || params.detail === 'detailed' ? params.detail : 'normal';
+    const concurrency = String(parseInt(params.concurrency || 3, 10) || 3);
+    const r = await runBidFetch(userNN, ['queue_summarize', detail, concurrency], 600000);
+    jsonRes(res, r.ok ? 200 : 500, r);
     return;
   }
 
@@ -1432,7 +1546,7 @@ const server = http.createServer(async (req, res) => {
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel',
             'application/vnd.oasis.opendocument.spreadsheet'];
 
-          // HWP/HWPX → download + LibreOffice
+          // HWP/HWPX → download + rhwp
           const hwpTypes = ['application/x-hwp', 'application/haansofthwp', 'application/vnd.hancom.hwp',
             'application/vnd.hancom.hwpx', 'application/octet-stream'];
           const ext = (meta.data.name || '').split('.').pop()?.toLowerCase() || '';
@@ -1451,20 +1565,9 @@ const server = http.createServer(async (req, res) => {
                   child.on('close', (code) => { if (code !== 0) reject(new Error(`다운로드 실패 (exit ${code})`)); else resolve(); });
                   child.on('error', reject);
                 });
-                const outDir = `/tmp/hwp_conv_${Date.now()}`;
-                fs.mkdirSync(outDir, { recursive: true });
-                await new Promise((resolve, reject) => {
-                  execFile('libreoffice', ['--headless', '--convert-to', 'txt', '--outdir', outDir, tmpPath],
-                    { timeout: 60000 }, (err) => { if (err) reject(new Error(`HWP 변환 실패: ${err.message}`)); else resolve(); });
-                });
-                const convFiles = fs.readdirSync(outDir);
-                const convFile = convFiles.find(f => f.endsWith('.txt'));
-                if (convFile) {
-                  content = fs.readFileSync(path.join(outDir, convFile), 'utf8');
-                } else {
-                  content = '[HWP 변환 실패 — 텍스트 파일 생성 안 됨]';
-                }
-                try { fs.rmSync(outDir, { recursive: true }); } catch {}
+                const fileBase64 = fs.readFileSync(tmpPath).toString('base64');
+                const hwpResult = await hwpProcess('parse', fileBase64);
+                content = hwpResult.ok ? hwpResult.text : `[HWP 변환 실패: ${hwpResult.error}]`;
               } finally {
                 try { fs.unlinkSync(tmpPath); } catch {}
               }
@@ -1807,24 +1910,20 @@ const server = http.createServer(async (req, res) => {
             textContent = '[스프레드시트 변환 실패]';
           }
         } else if (['hwp', 'hwpx'].includes(ext)) {
-          // HWP → LibreOffice → text
-          const outDir = `/tmp/hwp_conv_${Date.now()}`;
-          fs.mkdirSync(outDir, { recursive: true });
-          await new Promise((resolve, reject) => {
-            execFile('libreoffice', ['--headless', '--convert-to', 'txt', '--outdir', outDir, tmpPath],
-              { timeout: 60000 }, (err) => {
-                if (err) reject(new Error(`HWP 변환 실패: ${err.message}`));
-                else resolve();
-              });
-          });
-          const convFiles = fs.readdirSync(outDir);
-          const convFile = convFiles.find(f => f.endsWith('.txt'));
-          if (convFile) {
-            textContent = fs.readFileSync(path.join(outDir, convFile), 'utf8');
-          } else {
-            textContent = '[HWP 변환 실패]';
-          }
-          try { fs.rmSync(outDir, { recursive: true }); } catch {}
+          // HWP → rhwp → text + documents에 원본 저장 (이미지 변환용)
+          const fileBase64 = fs.readFileSync(tmpPath).toString('base64');
+          const hwpResult = await hwpProcess('parse', fileBase64);
+          textContent = hwpResult.ok ? hwpResult.text : `[HWP 변환 실패: ${hwpResult.error}]`;
+          // 원본 파일을 documents에 저장해서 hwp_export_page 호출 가능하게
+          try {
+            const docsDir = `/opt/openclaw/shared/user${userNN}`;
+            if (fs.existsSync(docsDir)) {
+              const safeName = fileName.replace(/[^a-zA-Z0-9가-힣._-]/g, '_');
+              const destPath = path.join(docsDir, safeName);
+              fs.copyFileSync(tmpPath, destPath);
+              textContent += `\n\n[파일 저장 경로: /home/node/documents/${safeName}]`;
+            }
+          } catch {}
         } else {
           textContent = `[지원하지 않는 파일 형식: ${ext}]`;
         }
@@ -2125,8 +2224,39 @@ const server = http.createServer(async (req, res) => {
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let existing = {};
       try { existing = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
-      if (data.dooray) existing.dooray = { ...existing.dooray, ...data.dooray, updatedAt: new Date().toISOString() };
+      if (data.dooray) {
+        existing.dooray = { ...existing.dooray, ...data.dooray, updatedAt: new Date().toISOString() };
+        if (data.dooray.token) {
+          try {
+            const memberRes = await doorayApiRequest('GET', 'https://api.dooray.com/common/v1/members/me', data.dooray.token);
+            if (memberRes.status < 400 && memberRes.data?.result?.id) {
+              existing.dooray.memberId = memberRes.data.result.id;
+              existing.dooray.memberName = memberRes.data.result.name || '';
+              console.log(`[dooray] memberId saved for user${userNN}: ${existing.dooray.memberName} (${existing.dooray.memberId})`);
+            }
+          } catch (e) { console.warn('[dooray] memberId fetch failed:', e.message); }
+        }
+      }
       if (data.github) existing.github = { ...existing.github, ...data.github, updatedAt: new Date().toISOString() };
+      fs.writeFileSync(intFile, JSON.stringify(existing, null, 2));
+      jsonRes(res, 200, { ok: true });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/integrations/delete') {
+    try {
+      const body = await readBody(req);
+      const data = JSON.parse(body);
+      const userNN = data.userNN || url.searchParams.get('userNN');
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
+      let existing = {};
+      try { existing = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
+      if (data.dooray) { delete existing.dooray; console.log(`[dooray] integration deleted for user${userNN}`); }
+      if (data.github) { delete existing.github; }
       fs.writeFileSync(intFile, JSON.stringify(existing, null, 2));
       jsonRes(res, 200, { ok: true });
     } catch (err) {
@@ -2143,7 +2273,7 @@ const server = http.createServer(async (req, res) => {
       let data = {};
       try { data = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
       const safe = {};
-      if (data.dooray) safe.dooray = { token: data.dooray.token ? '••••' + data.dooray.token.slice(-4) : '', updatedAt: data.dooray.updatedAt || '' };
+      if (data.dooray) safe.dooray = { token: data.dooray.token ? '••••' + data.dooray.token.slice(-4) : '', memberId: data.dooray.memberId || '', memberName: data.dooray.memberName || '', updatedAt: data.dooray.updatedAt || '' };
       if (data.github) safe.github = { owner: data.github.owner || '', repo: data.github.repo || '', token: data.github.token ? '••••' + data.github.token.slice(-4) : '', updatedAt: data.github.updatedAt || '' };
       jsonRes(res, 200, { ok: true, data: safe });
     } catch (err) {
@@ -2374,6 +2504,59 @@ const server = http.createServer(async (req, res) => {
       if (err) { jsonRes(res, 500, { ok: false, error: stderr || err.message, output: stdout }); return; }
       jsonRes(res, 200, { ok: true, output: stdout });
     });
+
+  // POST /api/hwp/parse — HWP/HWPX 텍스트 추출
+  } else if (url.pathname === '/api/hwp/parse') {
+    try {
+      const { userNN, fileBase64, fileName } = params;
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      if (!fileBase64) { jsonRes(res, 400, { ok: false, error: 'Missing fileBase64' }); return; }
+      const result = await hwpProcess('parse', fileBase64);
+      if (!result.ok) { jsonRes(res, 422, { ok: false, error: result.error }); return; }
+      console.log(`[hwp] parse: ${fileName || 'file'} → ${result.text?.length || 0} chars, ${result.pageCount} pages`);
+      jsonRes(res, 200, { ok: true, text: result.text, pageCount: result.pageCount });
+    } catch (err) {
+      console.error('[hwp] parse error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+
+  // POST /api/hwp/info — HWP/HWPX 문서 메타데이터
+  } else if (url.pathname === '/api/hwp/info') {
+    try {
+      const { userNN, fileBase64 } = params;
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      if (!fileBase64) { jsonRes(res, 400, { ok: false, error: 'Missing fileBase64' }); return; }
+      const result = await hwpProcess('info', fileBase64);
+      if (!result.ok) { jsonRes(res, 422, { ok: false, error: result.error }); return; }
+      jsonRes(res, 200, { ok: true, info: result.info });
+    } catch (err) {
+      console.error('[hwp] info error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+
+  // POST /api/hwp/export-svg — HWP/HWPX 페이지 SVG 변환
+  } else if (url.pathname === '/api/hwp/export-svg') {
+    try {
+      const { userNN, fileBase64, page, fileName } = params;
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      if (!fileBase64) { jsonRes(res, 400, { ok: false, error: 'Missing fileBase64' }); return; }
+      const pageNum = typeof page === 'number' ? page : parseInt(page ?? '0', 10) || 0;
+      const result = await hwpProcess('export-svg', fileBase64, { page: pageNum });
+      if (!result.ok) { jsonRes(res, 422, { ok: false, error: result.error }); return; }
+      // SVG를 workspace/hwp-exports/ 에 저장
+      const exportDir = path.join(SVG_EXPORT_BASE, `user${userNN}`, 'workspace', 'hwp-exports');
+      fs.mkdirSync(exportDir, { recursive: true });
+      const baseName = (fileName || 'document').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9가-힣_-]/g, '_');
+      const svgName = `${baseName}_p${pageNum + 1}_${Date.now()}.svg`;
+      const svgPath = path.join(exportDir, svgName);
+      fs.writeFileSync(svgPath, result.svg, 'utf8');
+      const downloadUrl = `http://claw.tideflo.work/api/file/download?userNN=${userNN}&file=hwp-exports/${svgName}`;
+      console.log(`[hwp] export-svg: page ${pageNum} → ${svgName}`);
+      jsonRes(res, 200, { ok: true, svgPath: `/home/node/documents/hwp-exports/${svgName}`, downloadUrl, pageCount: result.pageCount });
+    } catch (err) {
+      console.error('[hwp] export-svg error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
 
   } else {
     jsonRes(res, 404, { ok: false, error: 'Not found' });
