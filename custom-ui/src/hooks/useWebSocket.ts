@@ -142,7 +142,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     try {
       const res = await sendRequest('sessions.list', {
         limit: 50,
-        activeMinutes: 1440,
+        activeMinutes: 10080,
         includeLastMessage: true,
         includeDerivedTitles: true,
       });
@@ -391,7 +391,10 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
         mentionSessionKeys.current.delete(evtSessionKey);
         mentionParentByKey.current.delete(evtSessionKey);
       }
-      if (!isMention) fetchSessions();
+      if (!isMention) {
+        fetchSessions();
+        setTimeout(() => fetchSessions(), 1500);
+      }
     } else if (state === 'error') {
       currentRunId.current = null;
       setIsSending(false);

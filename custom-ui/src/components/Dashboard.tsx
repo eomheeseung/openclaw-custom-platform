@@ -491,7 +491,7 @@ export function Dashboard({ sendRequest, agents, sessions: propSessions, message
 
   const fetchSessions = useCallback(async () => {
     try {
-      const res = await sendRequest('sessions.list', { limit: 50, activeMinutes: 1440, includeLastMessage: true, includeDerivedTitles: true });
+      const res = await sendRequest('sessions.list', { limit: 50, activeMinutes: 10080, includeLastMessage: true, includeDerivedTitles: true });
       const payload = (res as { payload?: Record<string, unknown> }).payload;
       if (payload?.sessions) {
         const list = (payload.sessions as Array<{ key: string; agentId?: string; label?: string; lastMessageAt?: number; updatedAt?: number; messageCount?: number; derivedTitle?: string }>).map(s => {
