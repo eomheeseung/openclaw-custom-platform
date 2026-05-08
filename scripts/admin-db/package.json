@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-admin-db",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "seed": "node seed.js",
+    "verify": "node verify.js",
+    "catchup": "node catchup.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "chokidar": "^3.6.0"
+  }
+}
