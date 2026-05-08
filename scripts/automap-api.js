@@ -34,6 +34,24 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// admin DB (SQLite) 통합 — Phase 1
+const { openDb } = require('./admin-db/lib/db');
+const { startWatcher } = require('./admin-db/watcher');
+const { catchup } = require('./admin-db/catchup');
+let _adminDb = null;
+function getAdminDb() {
+  if (_adminDb) return _adminDb;
+  try {
+    _adminDb = openDb();
+    try { catchup(_adminDb); } catch (e) { console.error('[admin-db] catchup error:', e.message); }
+    try { startWatcher(_adminDb); } catch (e) { console.error('[admin-db] watcher error:', e.message); }
+    console.log('[admin-db] ready');
+  } catch (e) {
+    console.error('[admin-db] init failed:', e.message);
+  }
+  return _adminDb;
+}
+
 const PORT = 18799;
 const AUTOMAP_SCRIPT = path.join(__dirname, 'discord-automap.sh');
 const SYNC_SCRIPT = path.join(__dirname, 'sync-agents.sh');
@@ -172,6 +190,12 @@ function resolveEmail(nameOrEmail) {
     // 이름이면 매핑에서 찾기
     return MEMBER_MAP[trimmed] || trimmed;
   }).join(',');
+}
+
+// 이메일 → 이름 역매핑
+const EMAIL_TO_NAME = Object.fromEntries(Object.entries(MEMBER_MAP).map(([n, e]) => [e, n]));
+function resolveName(email) {
+  return EMAIL_TO_NAME[email] || null;
 }
 
 function saveUsers(users) {
@@ -593,6 +617,103 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ===== Admin DB API (Phase 1, SQLite 메타 인덱스) =====
+
+  // GET /api/admin/db/users
+  if (req.method === 'GET' && url.pathname === '/api/admin/db/users') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const db = getAdminDb();
+      if (!db) { jsonRes(res, 503, { ok: false, error: 'admin-db not ready' }); return; }
+      const rows = db.prepare(`
+        SELECT u.slot, u.email, u.name, u.status, u.updated_at,
+               (SELECT COUNT(*) FROM agents a WHERE a.user_slot = u.slot AND a.status = 'active') AS agent_count,
+               (SELECT COUNT(*) FROM sessions s WHERE s.user_slot = u.slot AND s.status = 'active') AS session_count
+        FROM users u
+        ORDER BY u.slot
+      `).all();
+      jsonRes(res, 200, { ok: true, users: rows });
+    } catch (e) {
+      jsonRes(res, 500, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  // GET /api/admin/db/sessions?user=01&status=active
+  if (req.method === 'GET' && url.pathname === '/api/admin/db/sessions') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const db = getAdminDb();
+      if (!db) { jsonRes(res, 503, { ok: false, error: 'admin-db not ready' }); return; }
+      const u = url.searchParams.get('user') || null;
+      const st = url.searchParams.get('status') || null;
+      let q = 'SELECT id, session_key, user_slot, agent_id, status, is_main, message_count, total_tokens, last_active_at FROM sessions WHERE 1=1';
+      const params = [];
+      if (u) { q += ' AND user_slot = ?'; params.push(u); }
+      if (st) { q += ' AND status = ?'; params.push(st); }
+      q += ' ORDER BY last_active_at DESC LIMIT 500';
+      const rows = db.prepare(q).all(...params);
+      jsonRes(res, 200, { ok: true, sessions: rows });
+    } catch (e) {
+      jsonRes(res, 500, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  // GET /api/admin/db/usage?from=YYYY-MM-DD&to=YYYY-MM-DD&user=NN
+  if (req.method === 'GET' && url.pathname === '/api/admin/db/usage') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const db = getAdminDb();
+      if (!db) { jsonRes(res, 503, { ok: false, error: 'admin-db not ready' }); return; }
+      const from = url.searchParams.get('from') || '1970-01-01';
+      const to = url.searchParams.get('to') || '9999-12-31';
+      const user = url.searchParams.get('user') || null;
+      let q = `
+        SELECT user_slot, date, model,
+               SUM(input_tokens) AS input_tokens,
+               SUM(output_tokens) AS output_tokens,
+               SUM(cache_read) AS cache_read,
+               SUM(cache_write) AS cache_write,
+               SUM(message_count) AS message_count,
+               SUM(cost_usd) AS cost_usd,
+               SUM(cost_krw) AS cost_krw
+        FROM api_usage_daily
+        WHERE date BETWEEN ? AND ?`;
+      const params = [from, to];
+      if (user) { q += ' AND user_slot = ?'; params.push(user); }
+      q += ' GROUP BY user_slot, date, model ORDER BY date DESC, user_slot, model';
+      const rows = db.prepare(q).all(...params);
+      jsonRes(res, 200, { ok: true, usage: rows });
+    } catch (e) {
+      jsonRes(res, 500, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  // GET /api/admin/db/fx (latest USD→KRW)
+  if (req.method === 'GET' && url.pathname === '/api/admin/db/fx') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const db = getAdminDb();
+      if (!db) { jsonRes(res, 503, { ok: false, error: 'admin-db not ready' }); return; }
+      const row = db.prepare(`
+        SELECT currency, to_currency, rate, fetched_at, source
+        FROM fx_rates
+        WHERE currency = 'USD'
+        ORDER BY fetched_at DESC LIMIT 1
+      `).get();
+      jsonRes(res, 200, { ok: true, fx: row || null });
+    } catch (e) {
+      jsonRes(res, 500, { ok: false, error: e.message });
+    }
+    return;
+  }
+
   // ===== Admin API =====
 
   // GET /api/admin/users
@@ -616,6 +737,7 @@ const server = http.createServer(async (req, res) => {
       const email = slotToEmail[nn] || null;
       slots.push({
         slot: nn, email,
+        name: email ? resolveName(email) : null,
         activeSessions: email ? (sessionCounts[email] || 0) : 0,
         lastLogin: email ? activity[email]?.lastLogin || null : null,
         lastActivity: email ? activity[email]?.lastActivity || null : null,
@@ -923,6 +1045,141 @@ const server = http.createServer(async (req, res) => {
       totalSlots: 15,
       usersAssigned: Object.keys(loadUsers()).length,
       activeSessions: sessions.size,
+    });
+    return;
+  }
+
+  // GET /api/admin/usage — 사용자별 토큰/비용 집계
+  // 쿼리: from=YYYY-MM-DD, to=YYYY-MM-DD, userNN=02 (선택), groupBy=day|week
+  if (req.method === 'GET' && url.pathname === '/api/admin/usage') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+
+    try {
+      const today = new Date();
+      const kst = new Date(today.getTime() + 9 * 60 * 60 * 1000);
+      const todayStr = kst.toISOString().slice(0, 10);
+      const defaultFrom = new Date(kst.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+
+      const fromDate = url.searchParams.get('from') || defaultFrom;
+      const toDate = url.searchParams.get('to') || todayStr;
+      const filterUser = url.searchParams.get('userNN');
+      const groupBy = url.searchParams.get('groupBy') || 'day';
+
+      const usageBase = '/opt/openclaw/data/usage';
+      const userList = filterUser
+        ? [filterUser]
+        : Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0'));
+
+      const result = {};
+      let grandTotal = { totalTokens: 0, costUsd: 0, costKrw: 0, messageCount: 0 };
+
+      for (const nn of userList) {
+        const dir = path.join(usageBase, `user${nn}`);
+        if (!fs.existsSync(dir)) {
+          result[nn] = { days: [], total: { totalTokens: 0, costUsd: 0, costKrw: 0, messageCount: 0 }, models: {} };
+          continue;
+        }
+        const days = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+        const userDays = [];
+        const userTotal = { totalTokens: 0, costUsd: 0, costKrw: 0, messageCount: 0 };
+        const userModels = {};
+
+        for (const fname of days) {
+          const dk = fname.replace('.json', '');
+          if (dk < fromDate || dk > toDate) continue;
+          try {
+            const day = JSON.parse(fs.readFileSync(path.join(dir, fname), 'utf8'));
+            userDays.push({
+              date: dk,
+              totalTokens: day.totalTokens || 0,
+              costUsd: day.costUsd || 0,
+              costKrw: day.costKrw || 0,
+              messageCount: day.messageCount || 0,
+              models: day.models || {},
+            });
+            userTotal.totalTokens += day.totalTokens || 0;
+            userTotal.costUsd += day.costUsd || 0;
+            userTotal.costKrw += day.costKrw || 0;
+            userTotal.messageCount += day.messageCount || 0;
+            for (const [m, mdata] of Object.entries(day.models || {})) {
+              if (!userModels[m]) userModels[m] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, messageCount: 0, costUsd: 0 };
+              for (const k of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens', 'messageCount', 'costUsd']) {
+                userModels[m][k] += mdata[k] || 0;
+              }
+            }
+          } catch { /* skip corrupt */ }
+        }
+        userDays.sort((a, b) => a.date.localeCompare(b.date));
+
+        // 주별 그루핑이면 ISO 주차로 묶기
+        let groupedDays = userDays;
+        if (groupBy === 'week') {
+          const weekMap = new Map();
+          for (const d of userDays) {
+            const dt = new Date(d.date + 'T00:00:00Z');
+            const dayOfWeek = (dt.getUTCDay() + 6) % 7; // 월=0
+            const monday = new Date(dt.getTime() - dayOfWeek * 86400000);
+            const weekKey = monday.toISOString().slice(0, 10);
+            if (!weekMap.has(weekKey)) {
+              weekMap.set(weekKey, { weekStart: weekKey, totalTokens: 0, costUsd: 0, costKrw: 0, messageCount: 0 });
+            }
+            const w = weekMap.get(weekKey);
+            w.totalTokens += d.totalTokens;
+            w.costUsd += d.costUsd;
+            w.costKrw += d.costKrw;
+            w.messageCount += d.messageCount;
+          }
+          groupedDays = Array.from(weekMap.values()).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+        }
+
+        result[nn] = { days: groupedDays, total: userTotal, models: userModels };
+        grandTotal.totalTokens += userTotal.totalTokens;
+        grandTotal.costUsd += userTotal.costUsd;
+        grandTotal.costKrw += userTotal.costKrw;
+        grandTotal.messageCount += userTotal.messageCount;
+      }
+
+      // 환율 + 단가 정보 함께 반환 (UI에서 표시용)
+      let pricing = null;
+      try { pricing = JSON.parse(fs.readFileSync('/opt/openclaw/config/usage-pricing.json', 'utf8')); } catch {}
+
+      // 사용자 이메일 + 이름 매핑
+      const usersMap = loadUsers();
+      const slotEmails = {};
+      const slotNames = {};
+      for (const [email, nn] of Object.entries(usersMap)) {
+        slotEmails[nn] = email;
+        const name = resolveName(email);
+        if (name) slotNames[nn] = name;
+      }
+
+      jsonRes(res, 200, {
+        ok: true,
+        from: fromDate,
+        to: toDate,
+        groupBy,
+        users: result,
+        slotEmails,
+        slotNames,
+        grandTotal,
+        fx: pricing?.fx || null,
+        models: pricing?.models || null,
+      });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  // POST /api/admin/usage/refresh — 오늘 데이터 즉시 재집계
+  if (req.method === 'POST' && url.pathname === '/api/admin/usage/refresh') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    const { exec } = require('child_process');
+    exec('node /opt/openclaw/scripts/usage-aggregator.mjs', { timeout: 120000 }, (err, stdout, stderr) => {
+      if (err) { jsonRes(res, 500, { ok: false, error: stderr || err.message }); return; }
+      jsonRes(res, 200, { ok: true, output: stdout.slice(-500) });
     });
     return;
   }
@@ -2282,6 +2539,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ============ HWP SVG VIEWER ============
+  if (req.method === 'GET' && url.pathname === '/api/hwp/svg') {
+    try {
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN') || '');
+      const fileName = url.searchParams.get('file') || '';
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      if (!fileName || fileName.includes('/') || fileName.includes('..') || !fileName.endsWith('.svg')) {
+        jsonRes(res, 400, { ok: false, error: 'Invalid file' }); return;
+      }
+      const svgPath = path.join(SVG_EXPORT_BASE, `user${userNN}`, 'workspace', 'hwp-exports', fileName);
+      if (!fs.existsSync(svgPath)) { jsonRes(res, 404, { ok: false, error: 'File not found' }); return; }
+      const stat = fs.statSync(svgPath);
+      res.writeHead(200, {
+        'Content-Type': 'image/svg+xml; charset=utf-8',
+        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+        'Content-Length': stat.size,
+        'Cache-Control': 'private, max-age=3600',
+      });
+      fs.createReadStream(svgPath).pipe(res);
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   // ============ FILE DOWNLOAD ============
   if (req.method === 'GET' && url.pathname === '/api/file/download') {
     try {
@@ -2550,7 +2832,7 @@ const server = http.createServer(async (req, res) => {
       const svgName = `${baseName}_p${pageNum + 1}_${Date.now()}.svg`;
       const svgPath = path.join(exportDir, svgName);
       fs.writeFileSync(svgPath, result.svg, 'utf8');
-      const downloadUrl = `http://claw.tideflo.work/api/file/download?userNN=${userNN}&file=hwp-exports/${svgName}`;
+      const downloadUrl = `http://claw.tideflo.work/api/hwp/svg?userNN=${userNN}&file=${encodeURIComponent(svgName)}`;
       console.log(`[hwp] export-svg: page ${pageNum} → ${svgName}`);
       jsonRes(res, 200, { ok: true, svgPath: `/home/node/documents/hwp-exports/${svgName}`, downloadUrl, pageCount: result.pageCount });
     } catch (err) {
@@ -2565,4 +2847,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[openclaw-api] listening on 0.0.0.0:${PORT}`);
+  // admin DB 초기화 (catchup + watcher 시작)
+  getAdminDb();
 });
