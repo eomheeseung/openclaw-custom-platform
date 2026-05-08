@@ -262,20 +262,29 @@ export function Sidebar({
                   {/* Time + Delete */}
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <span className="text-[10px] text-text-secondary/50 font-mono">{formatDate(session.lastMessageAt)}</span>
-                    {onDeleteSession && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm(`"${label || session.sessionKey}" 세션을 삭제하시겠습니까?`)) {
-                            onDeleteSession(session.sessionKey);
-                          }
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-0.5 text-text-secondary hover:text-red-500 transition-all rounded"
-                        title="삭제"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    )}
+                    {onDeleteSession && (() => {
+                      const isMain = /^agent:[^:]+:main$/.test(session.sessionKey);
+                      return (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isMain) return;
+                            if (confirm(`"${label || session.sessionKey}" 세션을 삭제하시겠습니까?`)) {
+                              onDeleteSession(session.sessionKey);
+                            }
+                          }}
+                          disabled={isMain}
+                          className={`opacity-0 group-hover:opacity-100 p-0.5 transition-all rounded ${
+                            isMain
+                              ? 'text-text-secondary/30 cursor-not-allowed'
+                              : 'text-text-secondary hover:text-red-500'
+                          }`}
+                          title={isMain ? '메인 대화는 삭제할 수 없습니다' : '삭제'}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
               );

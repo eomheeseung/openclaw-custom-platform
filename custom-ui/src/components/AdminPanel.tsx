@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Server, Activity, Settings, RefreshCw, UserPlus, UserMinus, RotateCcw, ChevronDown, ChevronRight, Cpu, HardDrive, Loader2, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { Users, Server, Activity, Settings, RefreshCw, UserPlus, UserMinus, RotateCcw, ChevronDown, ChevronRight, Cpu, HardDrive, Loader2, CheckCircle, XCircle, AlertTriangle, BarChart3, DollarSign } from 'lucide-react';
 
 interface UserSlot {
   slot: string;
   email: string | null;
+  name: string | null;
   activeSessions: number;
   lastLogin: number | null;
   lastActivity: number | null;
@@ -32,7 +33,33 @@ interface SlotAgent {
   isDiscord: boolean;
 }
 
-type AdminTab = 'users' | 'containers' | 'config';
+type AdminTab = 'users' | 'containers' | 'usage' | 'config';
+
+interface UsageDay {
+  date?: string;
+  weekStart?: string;
+  totalTokens: number;
+  costUsd: number;
+  costKrw: number;
+  messageCount: number;
+  models?: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; messageCount: number; costUsd: number }>;
+}
+interface UsageUser {
+  days: UsageDay[];
+  total: { totalTokens: number; costUsd: number; costKrw: number; messageCount: number };
+  models: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; messageCount: number; costUsd: number }>;
+}
+interface UsageResponse {
+  ok: boolean;
+  from: string;
+  to: string;
+  groupBy: string;
+  users: Record<string, UsageUser>;
+  slotEmails: Record<string, string>;
+  slotNames: Record<string, string>;
+  grandTotal: { totalTokens: number; costUsd: number; costKrw: number; messageCount: number };
+  fx: { usdToKrw: number; updatedAt: string; source?: string } | null;
+}
 
 function timeAgo(ts: number | null): string {
   if (!ts) return '-';
@@ -61,6 +88,13 @@ export function AdminPanel() {
   // Expanded slot details
   const [expandedSlot, setExpandedSlot] = useState<string | null>(null);
   const [slotAgents, setSlotAgents] = useState<Record<string, { agents: SlotAgent[]; model: string; discordAccounts: string[] }>>({});
+
+  // Usage tracking
+  const [usage, setUsage] = useState<UsageResponse | null>(null);
+  const [usagePeriod, setUsagePeriod] = useState<'week' | 'month' | 'all'>('month');
+  const [usageGroupBy, setUsageGroupBy] = useState<'day' | 'week'>('day');
+  const [refreshingUsage, setRefreshingUsage] = useState(false);
+  const [expandedUsageUser, setExpandedUsageUser] = useState<string | null>(null);
 
   const showMsg = (msg: string, isError = false) => {
     if (isError) { setError(msg); setTimeout(() => setError(''), 5000); }
@@ -99,6 +133,35 @@ export function AdminPanel() {
     } catch { /* ignore */ }
   }, []);
 
+  const fetchUsage = useCallback(async (period: 'week' | 'month' | 'all', groupBy: 'day' | 'week') => {
+    try {
+      const today = new Date();
+      const kst = new Date(today.getTime() + 9 * 60 * 60 * 1000);
+      const toStr = kst.toISOString().slice(0, 10);
+      let fromStr = '2026-01-01';
+      if (period === 'week') fromStr = new Date(kst.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+      else if (period === 'month') fromStr = new Date(kst.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+
+      const params = new URLSearchParams({ from: fromStr, to: toStr, groupBy });
+      const r = await fetch(`/api/admin/usage?${params}`, { credentials: 'include' });
+      const d = await r.json();
+      if (d.ok) setUsage(d);
+    } catch { /* ignore */ }
+  }, []);
+
+  const refreshUsageNow = async () => {
+    setRefreshingUsage(true);
+    try {
+      await fetch('/api/admin/usage/refresh', { method: 'POST', credentials: 'include' });
+      await fetchUsage(usagePeriod, usageGroupBy);
+      showMsg('사용량 데이터를 새로 집계했습니다');
+    } catch {
+      showMsg('재집계 실패', true);
+    } finally {
+      setRefreshingUsage(false);
+    }
+  };
+
   const fetchSlotAgents = async (slot: string) => {
     try {
       const r = await fetch(`/api/admin/agents/${slot}`, { credentials: 'include' });
@@ -114,6 +177,10 @@ export function AdminPanel() {
   };
 
   useEffect(() => { refreshAll(); }, []);
+
+  useEffect(() => {
+    if (tab === 'usage') fetchUsage(usagePeriod, usageGroupBy);
+  }, [tab, usagePeriod, usageGroupBy, fetchUsage]);
 
   useEffect(() => {
     if (tab === 'containers') { fetchContainers(); fetchStats(); }
@@ -174,6 +241,7 @@ export function AdminPanel() {
   const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
     { key: 'users', label: '유저 관리', icon: <Users className="w-4 h-4" /> },
     { key: 'containers', label: '컨테이너', icon: <Server className="w-4 h-4" /> },
+    { key: 'usage', label: 'API 사용량', icon: <BarChart3 className="w-4 h-4" /> },
     { key: 'config', label: '시스템', icon: <Settings className="w-4 h-4" /> },
   ];
 
@@ -279,7 +347,10 @@ export function AdminPanel() {
 
                     {/* Email or empty */}
                     {s.email ? (
-                      <span className="flex-1 text-sm text-text-primary">{s.email}</span>
+                      <span className="flex-1 text-sm">
+                        <span className="text-text-primary">{s.email}</span>
+                        {s.name && <span className="ml-2 text-text-secondary">({s.name})</span>}
+                      </span>
                     ) : (
                       <span className="flex-1 text-sm text-text-secondary italic">빈 슬롯</span>
                     )}
@@ -382,6 +453,226 @@ export function AdminPanel() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Usage Tab */}
+      {tab === 'usage' && (
+        <div className="space-y-4">
+          {/* 컨트롤 바 */}
+          <div className="bg-card border border-border-color rounded-xl p-4 flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-secondary">기간:</span>
+              {(['week', 'month', 'all'] as const).map(p => (
+                <button key={p} onClick={() => setUsagePeriod(p)}
+                  className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${usagePeriod === p ? 'bg-accent text-white' : 'bg-background border border-border-color text-text-secondary hover:text-text-primary'}`}>
+                  {p === 'week' ? '최근 7일' : p === 'month' ? '최근 30일' : '전체'}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-secondary">그룹:</span>
+              {(['day', 'week'] as const).map(g => (
+                <button key={g} onClick={() => setUsageGroupBy(g)}
+                  className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${usageGroupBy === g ? 'bg-accent text-white' : 'bg-background border border-border-color text-text-secondary hover:text-text-primary'}`}>
+                  {g === 'day' ? '일별' : '주별'}
+                </button>
+              ))}
+            </div>
+            <button onClick={refreshUsageNow} disabled={refreshingUsage}
+              className="ml-auto px-3 py-1.5 text-xs bg-background border border-border-color rounded-lg text-text-secondary hover:text-text-primary transition-colors flex items-center gap-2">
+              {refreshingUsage ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              지금 재집계
+            </button>
+          </div>
+
+          {/* 합계 카드 */}
+          {usage && (
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-card border border-border-color rounded-xl p-4">
+                <p className="text-xs text-text-secondary mb-1">총 비용 (KRW)</p>
+                <p className="text-2xl font-bold text-text-primary">₩{usage.grandTotal.costKrw.toLocaleString()}</p>
+                <p className="text-xs text-text-secondary mt-1">${usage.grandTotal.costUsd.toFixed(4)}</p>
+              </div>
+              <div className="bg-card border border-border-color rounded-xl p-4">
+                <p className="text-xs text-text-secondary mb-1">총 토큰</p>
+                <p className="text-2xl font-bold text-text-primary">{(usage.grandTotal.totalTokens / 1000).toFixed(1)}K</p>
+                <p className="text-xs text-text-secondary mt-1">{usage.grandTotal.totalTokens.toLocaleString()} tokens</p>
+              </div>
+              <div className="bg-card border border-border-color rounded-xl p-4">
+                <p className="text-xs text-text-secondary mb-1">총 메시지</p>
+                <p className="text-2xl font-bold text-text-primary">{usage.grandTotal.messageCount.toLocaleString()}</p>
+              </div>
+              <div className="bg-card border border-border-color rounded-xl p-4">
+                <p className="text-xs text-text-secondary mb-1">환율</p>
+                <p className="text-2xl font-bold text-text-primary">{usage.fx?.usdToKrw.toLocaleString() || '-'}</p>
+                <p className="text-xs text-text-secondary mt-1">{usage.fx?.updatedAt} 기준</p>
+              </div>
+            </div>
+          )}
+
+          {/* 사용자별 표 — A안: 활동성 중심 */}
+          {usage && (() => {
+            // 전체 합 대비 점유율(%)용
+            const totalKrwAll = usage.grandTotal.costKrw || 0;
+            // 막대 길이는 시각적 비교를 위해 1위 대비
+            const maxKrwAcrossUsers = Math.max(
+              ...Object.values(usage.users).map(u => u?.total.costKrw || 0),
+              1
+            );
+
+            return (
+              <div className="bg-card border border-border-color rounded-xl overflow-hidden">
+                <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-background text-xs text-text-secondary font-medium">
+                  <div className="col-span-1">슬롯</div>
+                  <div className="col-span-3">이메일 (이름)</div>
+                  <div className="col-span-1 text-right" title="이 기간 중 실제로 사용한 날 수">활동일수</div>
+                  <div className="col-span-2 text-right" title="활동일 평균 비용 (사용한 날만 계산)">일평균</div>
+                  <div className="col-span-2 text-right">누적 비용</div>
+                  <div className="col-span-3" title="전체 비용 중 이 사용자가 차지하는 점유율 (모든 사용자 합 = 100%)">점유율</div>
+                </div>
+                {Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0')).map(nn => {
+                  const u = usage.users[nn];
+                  const email = usage.slotEmails[nn] || '-';
+                  const name = usage.slotNames?.[nn];
+                  const tot = u?.total || { totalTokens: 0, costUsd: 0, costKrw: 0, messageCount: 0 };
+                  const activeDays = u?.days.filter(d => d.costKrw > 0).length || 0;
+                  const avgPerDay = activeDays > 0 ? Math.round(tot.costKrw / activeDays) : 0;
+                  const sharePct = totalKrwAll > 0 ? (tot.costKrw / totalKrwAll) * 100 : 0;
+                  const barWidthPct = maxKrwAcrossUsers > 0 ? (tot.costKrw / maxKrwAcrossUsers) * 100 : 0;
+                  const isExpanded = expandedUsageUser === nn;
+                  const hasData = tot.totalTokens > 0;
+                  return (
+                    <div key={nn} className="border-t border-border-color">
+                      <button onClick={() => setExpandedUsageUser(isExpanded ? null : nn)}
+                        className={`w-full grid grid-cols-12 gap-2 px-4 py-3 text-sm items-center transition-colors ${hasData ? 'hover:bg-background cursor-pointer' : 'opacity-50 cursor-default'}`}
+                        disabled={!hasData}>
+                        <div className="col-span-1 flex items-center gap-1">
+                          {hasData && (isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />)}
+                          <span className="text-text-primary font-mono">{nn}</span>
+                        </div>
+                        <div className="col-span-3 text-text-secondary truncate text-left">
+                          <span className="text-text-primary">{email}</span>
+                          {name && <span className="ml-2 text-text-secondary">({name})</span>}
+                        </div>
+                        <div className="col-span-1 text-right text-text-primary">
+                          {hasData ? `${activeDays}일` : '-'}
+                        </div>
+                        <div className="col-span-2 text-right text-text-secondary">
+                          {hasData ? `₩${avgPerDay.toLocaleString()}` : '-'}
+                        </div>
+                        <div className="col-span-2 text-right text-text-primary font-medium">
+                          {hasData ? `₩${tot.costKrw.toLocaleString()}` : '-'}
+                        </div>
+                        <div className="col-span-3">
+                          {hasData ? (
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-2 bg-background rounded overflow-hidden">
+                                <div className="h-full bg-accent" style={{ width: `${barWidthPct}%` }} />
+                              </div>
+                              <span className="text-xs text-text-secondary w-10 text-right">{sharePct.toFixed(1)}%</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      </button>
+
+                      {isExpanded && u && (
+                        <div className="bg-background px-4 py-4 space-y-4">
+                          {/* 요약 카드 */}
+                          <div className="grid grid-cols-4 gap-2">
+                            <div className="bg-card border border-border-color rounded-lg p-3">
+                              <p className="text-xs text-text-secondary">총 메시지</p>
+                              <p className="text-lg font-bold text-text-primary">{tot.messageCount.toLocaleString()}<span className="text-xs font-normal text-text-secondary">건</span></p>
+                            </div>
+                            <div className="bg-card border border-border-color rounded-lg p-3">
+                              <p className="text-xs text-text-secondary">총 토큰</p>
+                              <p className="text-lg font-bold text-text-primary">{tot.totalTokens.toLocaleString()}</p>
+                            </div>
+                            <div className="bg-card border border-border-color rounded-lg p-3">
+                              <p className="text-xs text-text-secondary">메시지당 평균</p>
+                              <p className="text-lg font-bold text-text-primary">
+                                {tot.messageCount > 0 ? `₩${Math.round(tot.costKrw / tot.messageCount).toLocaleString()}` : '-'}
+                              </p>
+                            </div>
+                            <div className="bg-card border border-border-color rounded-lg p-3">
+                              <p className="text-xs text-text-secondary">총 비용</p>
+                              <p className="text-lg font-bold text-text-primary">₩{tot.costKrw.toLocaleString()}</p>
+                              <p className="text-xs text-text-secondary">${tot.costUsd.toFixed(4)}</p>
+                            </div>
+                          </div>
+
+                          {/* 모델별 사용 — 명확한 헤더 */}
+                          {Object.keys(u.models).length > 0 && (
+                            <div>
+                              <p className="text-xs text-text-secondary mb-2 font-medium">모델별 사용</p>
+                              <div className="bg-card border border-border-color rounded-lg overflow-hidden">
+                                <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-background text-[11px] text-text-secondary font-medium">
+                                  <div className="col-span-3">모델</div>
+                                  <div className="col-span-2 text-right" title="새로 처리한 입력 토큰 (캐시 미스)">입력 토큰</div>
+                                  <div className="col-span-2 text-right" title="모델이 생성한 출력 토큰">출력 토큰</div>
+                                  <div className="col-span-2 text-right" title="캐시에서 재사용된 입력 토큰 (할인됨)">캐시 토큰</div>
+                                  <div className="col-span-1 text-right">메시지</div>
+                                  <div className="col-span-2 text-right">비용</div>
+                                </div>
+                                {Object.entries(u.models).map(([m, md]) => (
+                                  <div key={m} className="grid grid-cols-12 gap-2 text-xs px-3 py-2 border-t border-border-color">
+                                    <div className="col-span-3 text-text-primary font-mono">{m}</div>
+                                    <div className="col-span-2 text-right text-text-secondary">{md.input.toLocaleString()}</div>
+                                    <div className="col-span-2 text-right text-text-secondary">{md.output.toLocaleString()}</div>
+                                    <div className="col-span-2 text-right text-text-secondary">{md.cacheRead.toLocaleString()}</div>
+                                    <div className="col-span-1 text-right text-text-secondary">{md.messageCount.toLocaleString()}</div>
+                                    <div className="col-span-2 text-right text-text-primary">₩{Math.round(md.costUsd * (usage.fx?.usdToKrw || 1380)).toLocaleString()}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 일별/주별 추이 — 명확한 헤더 */}
+                          {u.days.length > 0 && (
+                            <div>
+                              <p className="text-xs text-text-secondary mb-2 font-medium">{usageGroupBy === 'day' ? '일별' : '주별'} 추이</p>
+                              <div className="bg-card border border-border-color rounded-lg overflow-hidden">
+                                <div className="flex items-center gap-2 px-3 py-2 bg-background text-[11px] text-text-secondary font-medium">
+                                  <div className="w-24">{usageGroupBy === 'day' ? '날짜' : '주 시작일'}</div>
+                                  <div className="flex-1">사용량 비율</div>
+                                  <div className="w-24 text-right">비용</div>
+                                  <div className="w-20 text-right">토큰</div>
+                                  <div className="w-12 text-right">메시지</div>
+                                </div>
+                                {u.days.slice().reverse().map((d, idx) => {
+                                  const maxKrw = Math.max(...u.days.map(x => x.costKrw), 1);
+                                  const widthPct = (d.costKrw / maxKrw) * 100;
+                                  return (
+                                    <div key={idx} className="flex items-center gap-2 text-xs px-3 py-2 border-t border-border-color">
+                                      <div className="w-24 text-text-secondary font-mono">{d.date || d.weekStart}</div>
+                                      <div className="flex-1 h-5 bg-background rounded overflow-hidden relative">
+                                        <div className="h-full bg-accent/30" style={{ width: `${widthPct}%` }} />
+                                      </div>
+                                      <div className="w-24 text-right text-text-primary">₩{d.costKrw.toLocaleString()}</div>
+                                      <div className="w-20 text-right text-text-secondary">{(d.totalTokens / 1000).toFixed(1)}K</div>
+                                      <div className="w-12 text-right text-text-secondary">{d.messageCount}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {!usage && (
+            <div className="bg-card border border-border-color rounded-xl p-8 text-center text-text-secondary text-sm flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              로딩 중...
+            </div>
+          )}
         </div>
       )}
 

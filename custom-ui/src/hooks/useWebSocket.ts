@@ -29,6 +29,84 @@ function generateId(): string {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function sessionsCacheKey(token: string): string {
+  const m = token.match(/user(\d+)/i);
+  const slot = m ? m[1].padStart(2, '0') : 'default';
+  return `tideclaw-sessions-cache-${slot}`;
+}
+
+function loadCachedSessions(token: string): Session[] {
+  try {
+    const raw = localStorage.getItem(sessionsCacheKey(token));
+    if (!raw) return [];
+    return JSON.parse(raw) as Session[];
+  } catch { return []; }
+}
+
+function saveCachedSessions(token: string, sessions: Session[]) {
+  try { localStorage.setItem(sessionsCacheKey(token), JSON.stringify(sessions)); } catch { /* ignore */ }
+}
+
+function humanizeAgentError(raw: string): string {
+  const msg = (raw || '').trim();
+  if (!msg) return '⚠️ 알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해주세요.';
+  const lower = msg.toLowerCase();
+
+  // Unknown model — 모델 카탈로그에서 찾지 못함
+  const unknownModel = msg.match(/Unknown model:\s*([^\s,)]+)/i);
+  if (unknownModel) {
+    return `⚠️ 모델 사용 불가\n\n선택된 모델 \`${unknownModel[1]}\`을(를) 현재 사용할 수 없어요. 관리자에게 문의하시거나 다른 모델로 전환해주세요.\n\n원본: ${msg}`;
+  }
+
+  // 잔액 부족 / 계정 정지
+  if (/insufficient[_\s-]?balance|insufficient_quota|account.*suspend|suspended.*balance/i.test(msg)) {
+    return `⚠️ API 잔액 부족\n\n현재 사용 중인 API 키의 잔액이 부족하거나 계정이 일시 정지되었어요. 관리자에게 문의해주세요.\n\n원본: ${msg}`;
+  }
+
+  // 인증 실패
+  if (/\b401\b|unauthorized|invalid.*api.*key|authentication.*fail|invalid_api_key/i.test(msg)) {
+    return `⚠️ 인증 실패\n\nAPI 키가 유효하지 않거나 만료되었어요. 관리자에게 문의해주세요.\n\n원본: ${msg}`;
+  }
+
+  // Rate limit / 429
+  if (/\b429\b|rate.?limit|too many requests|quota.*exceed|usage.*limit/i.test(msg)) {
+    return `⚠️ API 사용량 한도 초과\n\n짧은 시간에 너무 많은 요청을 보냈거나 일/월 한도에 도달했어요. 잠시 후 다시 시도해주세요.\n\n원본: ${msg}`;
+  }
+
+  // 과부하 / 503
+  if (/overload|\b503\b|service.?unavailable|server.?busy/i.test(msg)) {
+    return `⚠️ 서버 과부하\n\nAI 모델 서버가 일시적으로 과부하 상태예요. 잠시 후 다시 시도해주세요.\n\n원본: ${msg}`;
+  }
+
+  // 타임아웃
+  if (/timeout|timed out|deadline.*exceed/i.test(msg)) {
+    return `⚠️ 응답 시간 초과\n\n모델이 정해진 시간 안에 응답하지 못했어요. 다시 시도하거나 질문을 짧게 나눠보세요.\n\n원본: ${msg}`;
+  }
+
+  // 네트워크
+  if (/network|fetch failed|econnrefused|enotfound|socket hang up|connection.*reset/i.test(msg)) {
+    return `⚠️ 네트워크 오류\n\n외부 모델 서버와 연결하지 못했어요. 잠시 후 다시 시도해주세요.\n\n원본: ${msg}`;
+  }
+
+  // Context length
+  if (/context.?length|context.?window|too.?many.?tokens|maximum.?context/i.test(msg)) {
+    return `⚠️ 컨텍스트 길이 초과\n\n대화가 너무 길어서 모델이 처리할 수 있는 한도를 넘었어요. 새 세션을 시작하거나 /compact를 실행해주세요.\n\n원본: ${msg}`;
+  }
+
+  // Failover
+  if (/FailoverError|all providers failed|no.?provider.?available/i.test(msg)) {
+    return `⚠️ 모든 모델 사용 불가\n\n등록된 모든 모델/키가 일시적으로 응답하지 못해요. 잠시 후 다시 시도하거나 관리자에게 문의해주세요.\n\n원본: ${msg}`;
+  }
+
+  // 권한
+  if (/\b403\b|forbidden|permission.?denied/i.test(msg)) {
+    return `⚠️ 권한 없음\n\n이 작업을 수행할 권한이 없어요. 관리자에게 문의해주세요.\n\n원본: ${msg}`;
+  }
+
+  // 기본
+  return `⚠️ 오류 발생\n\n${msg}`;
+}
+
 export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketReturn {
   const ws = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
@@ -37,7 +115,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   });
   const [messages, setMessages] = useState<Message[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<Session[]>(() => loadCachedSessions(token));
   const [currentSession, setCurrentSession] = useState<string | null>(null);
   const [apiCallCount, setApiCallCount] = useState(0);
   const [isSending, setIsSending] = useState(false);
@@ -168,6 +246,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
             || s.includes('Sender')
             || s.includes('metadata')
             || s.startsWith('[파일:')
+            || s.toUpperCase().includes('HEARTBEAT')
             || /^[a-zA-Z0-9_-]{6,16}(\s*\(.*\))?$/i.test(s);
 
           const rawLabel = (s.label || '').trim();
@@ -200,11 +279,12 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           };
         });
         setSessions(sessionList);
+        saveCachedSessions(token, sessionList);
       }
     } catch (err) {
       console.error('Failed to fetch sessions:', err);
     }
-  }, [sendRequest]);
+  }, [sendRequest, token]);
 
   // Use refs for handlers so connect() never needs to change
   const handlersRef = useRef({
@@ -398,15 +478,16 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     } else if (state === 'error') {
       currentRunId.current = null;
       setIsSending(false);
-      const errorMessage = (payload.errorMessage as string) || 'An error occurred';
+      const errorMessage = (payload.errorMessage as string) || '';
+      const friendly = humanizeAgentError(errorMessage);
       setMessages(prev => {
         const idx = prev.findIndex(m => m.id === `run-${runId}`);
         if (idx >= 0) {
           const updated = [...prev];
-          updated[idx] = { ...updated[idx], content: `오류: ${errorMessage}`, isLoading: false };
+          updated[idx] = { ...updated[idx], content: friendly, isLoading: false };
           return updated;
         }
-        return [...prev, { id: `run-${runId}`, role: 'assistant' as const, content: `오류: ${errorMessage}`, timestamp: new Date(), isLoading: false }];
+        return [...prev, { id: `run-${runId}`, role: 'assistant' as const, content: friendly, timestamp: new Date(), isLoading: false }];
       });
     } else if (state === 'aborted') {
       currentRunId.current = null;

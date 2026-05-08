@@ -148,6 +148,7 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
             if (c.includes('---\nname:') || c.includes('```bash') || c.includes('Weather report') || c.includes('curl ') || c.startsWith('{') || c.includes('OpenClaw runtime') || c.includes('BEGIN_UNTRUSTED') || c.includes('runtime-generated') || c.includes('[Internal task') || c.includes('Sender (untrusted')) return false;
           }
           if (m.content.includes('===SOUL.md===') || m.content.includes('===IDENTITY.md===') || m.content.includes('===EMOJI===') || m.content.includes('HEARTBEAT.md') || m.content.includes('===AGENTS.md===')) return false;
+          if (/^HEARTBEAT(_[A-Z]+)?\b/i.test(m.content.trim())) return false;
           if (m.role === 'assistant') {
             const t = m.content.trim();
             if (t.startsWith('{') && t.includes('"status"') && t.includes('"accepted"')) return false;
