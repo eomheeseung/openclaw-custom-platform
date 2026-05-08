@@ -168,6 +168,13 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
           }
           if (m.content.includes('===SOUL.md===') || m.content.includes('===IDENTITY.md===') || m.content.includes('===EMOJI===') || m.content.includes('HEARTBEAT.md') || m.content.includes('===AGENTS.md===')) return false;
           if (/^HEARTBEAT(_[A-Z]+)?\b/i.test(m.content.trim())) return false;
+          // BOOTSTRAP.md 본문이 그대로 응답으로 나온 경우 hide (kimi-k2.6 등 reasoning 모델이 룰 무시 시 발생)
+          {
+            const ct = (m.content || '').trim();
+            if (/^#\s*시스템 규칙/i.test(ct)) return false;
+            if (ct.includes('절대 위반 금지') && (ct.includes('memory_search') || ct.includes('BOOTSTRAP.md'))) return false;
+            if (/^##\s*메모리\s*\(이전 대화/.test(ct)) return false;
+          }
           if (m.role === 'assistant') {
             const t = m.content.trim();
             if (t.startsWith('{') && t.includes('"status"') && t.includes('"accepted"')) return false;

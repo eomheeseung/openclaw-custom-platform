@@ -225,21 +225,35 @@ function App() {
     const onPop = () => {
       const p = parseUrlPath();
       if (p.view) _setCurrentView(p.view);
-      if (p.view === 'chat' && p.agentId && p.sessionTail) {
+      if (p.view === 'chat' && p.agentId && p.sessionTail === 'main') {
+        // main URL은 빈 화면 처리
+        if (currentSession) clearSession();
+      } else if (p.view === 'chat' && p.agentId && p.sessionTail) {
         const sk = `agent:${p.agentId}:${p.sessionTail}`;
         if (sk !== currentSession) switchSession(sk);
+      } else if (p.view === 'chat' && p.agentId && !p.sessionTail) {
+        if (currentSession) clearSession();
       }
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, [parseUrlPath, currentSession, switchSession]);
+  }, [parseUrlPath, currentSession, switchSession, clearSession]);
 
   // 첫 로드 시 URL의 sessionKey가 있으면 그 세션 활성화 (sessions 로드된 후)
   // URL이 /chat/<agentId> (sessionTail 없음)이면 빈 시작 화면으로 진입
   useEffect(() => {
     if (sessionRestoredRef.current || sessions.length === 0) return;
     const p = parseUrlPath();
-    if (p.view === 'chat' && p.agentId && p.sessionTail) {
+    if (p.view === 'chat' && p.agentId && p.sessionTail === 'main') {
+      // ChatGPT 방식: URL이 main 가리키면 빈 시작 화면으로 redirect
+      const ag = agents.find(a => a.id === p.agentId);
+      if (ag && (!selectedAgent || selectedAgent.id !== ag.id)) setSelectedAgent(ag);
+      if (currentSession) clearSession();
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({}, '', `/chat/${p.agentId}` + window.location.search);
+      }
+      sessionRestoredRef.current = true;
+    } else if (p.view === 'chat' && p.agentId && p.sessionTail) {
       const sk = `agent:${p.agentId}:${p.sessionTail}`;
       if (sessions.find(s => s.sessionKey === sk) && sk !== currentSession) {
         switchSession(sk);
@@ -258,20 +272,24 @@ function App() {
 
   const handleCreateSession = useCallback(() => { createSession(selectedAgent?.id); }, [createSession, selectedAgent]);
 
+  // ChatGPT 방식: main 세션은 사용자에게 진입점이 아님 — localStorage 저장/복원/URL push 모두 제외
+  const isMainKey = (k: string | null) => !!k && /^agent:[^:]+:main$/.test(k);
+
   // 세션 ID 저장 + URL 동기화 (chat view일 때)
   useEffect(() => {
     try {
-      if (currentSession) localStorage.setItem(`tideclaw-current-session-${slotForKey}`, currentSession);
+      if (currentSession && !isMainKey(currentSession)) {
+        localStorage.setItem(`tideclaw-current-session-${slotForKey}`, currentSession);
+      }
     } catch { /* ignore */ }
-    if (currentSession && currentView === 'chat' && typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin')) {
+    if (currentSession && !isMainKey(currentSession) && currentView === 'chat' && typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin')) {
       const u = sessionKeyToUrl(currentSession);
       if (u) {
         const target = `/chat/${u.agentId}/${u.tail}`;
         const cur = window.location.pathname;
         if (cur !== target) {
-          // URL이 이미 다른 chat 세션을 가리키고 있으면(첫 로드 시 사용자가 입력한 URL) 덮지 않음 — URL 기반 복원이 처리
           const urlState = parseUrlPath();
-          if (!sessionRestoredRef.current && urlState.view === 'chat' && urlState.agentId && urlState.sessionTail) {
+          if (!sessionRestoredRef.current && urlState.view === 'chat' && urlState.agentId && urlState.sessionTail && urlState.sessionTail !== 'main') {
             return;
           }
           window.history.replaceState({}, '', target + window.location.search);
@@ -280,12 +298,12 @@ function App() {
     }
   }, [currentSession, slotForKey, currentView, sessionKeyToUrl, parseUrlPath]);
 
-  // 세션 복원 (sessions 로드되면 1회)
+  // 세션 복원 (sessions 로드되면 1회) — main session은 복원 대상에서 제외
   useEffect(() => {
     if (sessionRestoredRef.current || sessions.length === 0 || currentSession) return;
     try {
       const savedSk = localStorage.getItem(`tideclaw-current-session-${slotForKey}`);
-      if (savedSk && sessions.find(s => s.sessionKey === savedSk)) {
+      if (savedSk && !isMainKey(savedSk) && sessions.find(s => s.sessionKey === savedSk)) {
         switchSession(savedSk);
         sessionRestoredRef.current = true;
       }
