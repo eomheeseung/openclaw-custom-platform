@@ -15,6 +15,7 @@ interface UseWebSocketReturn {
   currentSession: string | null;
   createSession: (agentId?: string) => void;
   switchSession: (sessionKey: string) => void;
+  clearSession: () => void;
   loadSessionHistory: (sessionKey: string) => void;
   deleteSession: (sessionKey: string) => Promise<void>;
   stopChat: () => void;
@@ -247,6 +248,8 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
             || s.includes('metadata')
             || s.startsWith('[파일:')
             || s.toUpperCase().includes('HEARTBEAT')
+            || /\[Bootstrap pending\]/i.test(s)
+            || /Please read BOOTSTRAP\.md/i.test(s)
             || /^[a-zA-Z0-9_-]{6,16}(\s*\(.*\))?$/i.test(s);
 
           const rawLabel = (s.label || '').trim();
@@ -713,7 +716,18 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     }
 
     const idempotencyKey = generateId();
-    const parentSessionKey = currentSession || 'main';
+    // ChatGPT 방식: currentSession 없으면 selectedAgent 기반으로 새 세션 키를 즉시 생성하고 set
+    let activeSessionKey = currentSession;
+    if (!activeSessionKey) {
+      // 첫 메시지 발신 시 — selectedAgent의 id 기반 새 세션 자동 생성
+      // (selectedAgent는 외부 prop이므로 fallback으로 'main' 유지)
+      const fallbackAgentId = (typeof window !== 'undefined' ? window.location.pathname.match(/^\/chat\/([^/]+)/)?.[1] : null) || null;
+      if (fallbackAgentId) {
+        activeSessionKey = `agent:${fallbackAgentId}:${generateId().slice(0, 8)}`;
+        setCurrentSession(activeSessionKey);
+      }
+    }
+    const parentSessionKey = activeSessionKey || 'main';
     let sessionKey = parentSessionKey;
     if (mentionTargetId) {
       // 별도 mention sessionKey 생성
@@ -855,6 +869,12 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     setMessages([]);
   }, []);
 
+  // ChatGPT 방식: 빈 시작 화면으로 진입 (currentSession 비움, 메시지 비움)
+  const clearSession = useCallback(() => {
+    setCurrentSession(null);
+    setMessages([]);
+  }, []);
+
   const switchSession = useCallback((sessionKey: string) => {
     setCurrentSession(sessionKey);
     sendRequest('chat.history', { sessionKey, limit: 200 })
@@ -992,6 +1012,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     currentSession,
     createSession,
     switchSession,
+    clearSession,
     loadSessionHistory,
     deleteSession,
     stopChat,

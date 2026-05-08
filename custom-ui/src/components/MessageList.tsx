@@ -20,6 +20,25 @@ function stripCronPrefix(content: string): string {
   return out.replace(/^\n+/, '').trimEnd();
 }
 
+/* OpenClaw [Bootstrap pending] 블록 + Sender 메타 + timestamp prefix 제거,
+   진짜 사용자 본문만 남김 */
+function stripBootstrapPending(content: string): string {
+  if (!content) return content;
+  let out = content;
+  // [Bootstrap pending] 블록과 그 안내문 제거
+  if (out.startsWith('[Bootstrap pending]')) {
+    const re = /\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+GMT[+-]\d+\]\s*/g;
+    let lastMatch: RegExpExecArray | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(out)) !== null) lastMatch = m;
+    if (lastMatch) out = out.slice(lastMatch.index + lastMatch[0].length);
+  } else {
+    // [Bootstrap pending] 없이도 leading timestamp prefix 한 개는 정리
+    out = out.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+GMT[+-]\d+\]\s*/, '');
+  }
+  return out.trim();
+}
+
 function ElapsedTimer({ startTime }: { startTime: Date }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -282,7 +301,7 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
                         </ReactMarkdown>
                       </div>
                     ) : (
-                      <p className="whitespace-pre-wrap leading-relaxed">{stripCronPrefix(trimFileContent(message.content))}</p>
+                      <p className="whitespace-pre-wrap leading-relaxed">{stripBootstrapPending(stripCronPrefix(trimFileContent(message.content)))}</p>
                     )}
                   </div>
 

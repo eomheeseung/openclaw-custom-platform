@@ -70,8 +70,31 @@ function timeAgo(ts: number | null): string {
   return `${Math.floor(diff / 86400000)}일 전`;
 }
 
+const ADMIN_TABS: AdminTab[] = ['users', 'containers', 'usage', 'config'];
+
+function pathToAdminTab(): AdminTab {
+  const m = window.location.pathname.match(/^\/admin\/([a-z]+)/);
+  if (m && (ADMIN_TABS as string[]).includes(m[1])) return m[1] as AdminTab;
+  return 'users';
+}
+
 export function AdminPanel() {
-  const [tab, setTab] = useState<AdminTab>('users');
+  const [tab, _setTab] = useState<AdminTab>(() => pathToAdminTab());
+
+  const setTab = useCallback((t: AdminTab) => {
+    _setTab(t);
+    const target = `/admin/${t}`;
+    if (window.location.pathname !== target) {
+      window.history.pushState({}, '', target);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => _setTab(pathToAdminTab());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   const [slots, setSlots] = useState<UserSlot[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [stats, setStats] = useState<ContainerStats[]>([]);

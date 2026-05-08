@@ -60,6 +60,8 @@ export function Sidebar({
     if (s.sessionKey.includes('subagent')) return false;
     // 멘션 호출용 임시 세션 (agent:xxx:mention-yyy) 은 사이드바에서 숨김
     if (/:mention-/.test(s.sessionKey)) return false;
+    // ChatGPT 방식: 백엔드의 :main 진입점 세션은 사이드바에서 숨김 (mention/cron 등 자동 메시지 누적 컨테이너 역할만)
+    if (/^agent:[^:]+:main$/.test(s.sessionKey)) return false;
     const label = s.label || '';
     if (label.includes('HEARTBEAT') || label.includes('heartbeat')) return false;
     return true;

@@ -64,7 +64,28 @@ function App() {
     const slot = m ? m[1].padStart(2, '0') : 'default';
     return `tideclaw-current-view-${slot}`;
   })();
+  const VALID_VIEWS_LIST: ViewType[] = ['dashboard', 'chat', 'agents', 'cron', 'channels', 'integrations', 'workflow'];
+  const parseUrlPath = useCallback(() => {
+    if (typeof window === 'undefined') return { view: null as ViewType | null, agentId: null as string | null, sessionTail: null as string | null };
+    const seg = window.location.pathname.split('/').filter(Boolean);
+    if (seg.length === 0 || (seg[0] && seg[0] === 'admin')) return { view: null, agentId: null, sessionTail: null };
+    const v = VALID_VIEWS_LIST.includes(seg[0] as ViewType) ? (seg[0] as ViewType) : null;
+    if (!v) return { view: null, agentId: null, sessionTail: null };
+    return {
+      view: v,
+      agentId: v === 'chat' && seg[1] ? seg[1] : null,
+      sessionTail: v === 'chat' && seg[2] ? seg.slice(2).join('/') : null,
+    };
+  }, []);
+
   const [currentView, _setCurrentView] = useState<ViewType>(() => {
+    const parsed = (typeof window !== 'undefined') ? (() => {
+      const seg = window.location.pathname.split('/').filter(Boolean);
+      const valid = ['dashboard', 'chat', 'agents', 'cron', 'channels', 'integrations', 'workflow'];
+      if (seg[0] && valid.includes(seg[0])) return seg[0] as ViewType;
+      return null;
+    })() : null;
+    if (parsed) return parsed;
     try {
       const saved = localStorage.getItem(viewStorageKey);
       const valid: ViewType[] = ['dashboard', 'chat', 'agents', 'cron', 'channels', 'integrations', 'workflow'];
@@ -75,6 +96,14 @@ function App() {
   const setCurrentView = useCallback((v: ViewType) => {
     _setCurrentView(v);
     try { localStorage.setItem(viewStorageKey, v); } catch { /* ignore */ }
+    if (typeof window !== 'undefined') {
+      const cur = window.location.pathname;
+      if (cur.startsWith('/admin')) return;
+      const target = `/${v}`;
+      if (cur !== target && !cur.startsWith(`${target}/`)) {
+        window.history.pushState({}, '', target + window.location.search);
+      }
+    }
   }, [viewStorageKey]);
   const slotForKey = (() => {
     const m = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') || '' : '').match(/user(\d+)/i);
@@ -132,7 +161,7 @@ function App() {
 
   const {
     connectionStatus, messages, sendMessage, agents, sessions,
-    currentSession, createSession, switchSession, loadSessionHistory,
+    currentSession, createSession, switchSession, clearSession, loadSessionHistory,
     deleteSession, stopChat, isLoading, apiCallCount, sendRequest, fetchAgents,
   } = useWebSocket({ url: token ? getGatewayUrl(token) : '', token });
 
@@ -150,8 +179,17 @@ function App() {
   }, [agents]);
 
   const handleSelectAgent = useCallback((agent: Agent) => {
-    setSelectedAgent(agent); setCurrentView('chat'); createSession(agent.id);
-  }, [createSession]);
+    // ChatGPT 방식: 에이전트 클릭 시 즉시 세션 만들지 않음 → 빈 시작 화면
+    setSelectedAgent(agent);
+    setCurrentView('chat');
+    clearSession();
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin')) {
+      const target = `/chat/${agent.id}`;
+      if (window.location.pathname !== target) {
+        window.history.pushState({}, '', target + window.location.search);
+      }
+    }
+  }, [clearSession]);
 
   const resolveAgentFromSessionKey = useCallback((sessionKey: string | undefined): Agent | null => {
     if (!sessionKey) return null;
@@ -160,21 +198,87 @@ function App() {
     return agents.find(a => a.id === m[1]) || null;
   }, [agents]);
 
+  const sessionKeyToUrl = useCallback((sk: string): { agentId: string; tail: string } | null => {
+    const m = sk.match(/^agent:([^:]+):(.+)$/);
+    if (!m) return null;
+    return { agentId: m[1], tail: m[2] };
+  }, []);
+
   const handleSelectSession = useCallback((session: Session) => {
     const byId = session.agentId ? agents.find(a => a.id === session.agentId) : null;
     const byKey = byId || resolveAgentFromSessionKey(session.sessionKey);
     setSelectedAgent(byKey);
     switchSession(session.sessionKey); setCurrentView('chat');
-  }, [agents, switchSession, resolveAgentFromSessionKey]);
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin')) {
+      const u = sessionKeyToUrl(session.sessionKey);
+      if (u) {
+        const target = `/chat/${u.agentId}/${u.tail}`;
+        if (window.location.pathname !== target) {
+          window.history.pushState({}, '', target + window.location.search);
+        }
+      }
+    }
+  }, [agents, switchSession, resolveAgentFromSessionKey, sessionKeyToUrl]);
+
+  // popstate (브라우저 뒤로/앞으로) → view/세션 복원
+  useEffect(() => {
+    const onPop = () => {
+      const p = parseUrlPath();
+      if (p.view) _setCurrentView(p.view);
+      if (p.view === 'chat' && p.agentId && p.sessionTail) {
+        const sk = `agent:${p.agentId}:${p.sessionTail}`;
+        if (sk !== currentSession) switchSession(sk);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [parseUrlPath, currentSession, switchSession]);
+
+  // 첫 로드 시 URL의 sessionKey가 있으면 그 세션 활성화 (sessions 로드된 후)
+  // URL이 /chat/<agentId> (sessionTail 없음)이면 빈 시작 화면으로 진입
+  useEffect(() => {
+    if (sessionRestoredRef.current || sessions.length === 0) return;
+    const p = parseUrlPath();
+    if (p.view === 'chat' && p.agentId && p.sessionTail) {
+      const sk = `agent:${p.agentId}:${p.sessionTail}`;
+      if (sessions.find(s => s.sessionKey === sk) && sk !== currentSession) {
+        switchSession(sk);
+        sessionRestoredRef.current = true;
+      }
+    } else if (p.view === 'chat' && p.agentId && !p.sessionTail) {
+      // /chat/<agentId> 빈 화면 진입: selectedAgent set + currentSession 비움
+      const ag = agents.find(a => a.id === p.agentId);
+      if (ag && (!selectedAgent || selectedAgent.id !== ag.id)) {
+        setSelectedAgent(ag);
+      }
+      if (currentSession) clearSession();
+      sessionRestoredRef.current = true;
+    }
+  }, [sessions, currentSession, switchSession, parseUrlPath]);
 
   const handleCreateSession = useCallback(() => { createSession(selectedAgent?.id); }, [createSession, selectedAgent]);
 
-  // 세션 ID 저장
+  // 세션 ID 저장 + URL 동기화 (chat view일 때)
   useEffect(() => {
     try {
       if (currentSession) localStorage.setItem(`tideclaw-current-session-${slotForKey}`, currentSession);
     } catch { /* ignore */ }
-  }, [currentSession, slotForKey]);
+    if (currentSession && currentView === 'chat' && typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin')) {
+      const u = sessionKeyToUrl(currentSession);
+      if (u) {
+        const target = `/chat/${u.agentId}/${u.tail}`;
+        const cur = window.location.pathname;
+        if (cur !== target) {
+          // URL이 이미 다른 chat 세션을 가리키고 있으면(첫 로드 시 사용자가 입력한 URL) 덮지 않음 — URL 기반 복원이 처리
+          const urlState = parseUrlPath();
+          if (!sessionRestoredRef.current && urlState.view === 'chat' && urlState.agentId && urlState.sessionTail) {
+            return;
+          }
+          window.history.replaceState({}, '', target + window.location.search);
+        }
+      }
+    }
+  }, [currentSession, slotForKey, currentView, sessionKeyToUrl, parseUrlPath]);
 
   // 세션 복원 (sessions 로드되면 1회)
   useEffect(() => {
@@ -345,7 +449,15 @@ function App() {
             />
           ) : currentView === 'chat' ? (
             <>
-              <MessageList messages={messages} agents={agents} />
+              {currentSession ? (
+                <MessageList messages={messages} agents={agents} />
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 text-text-secondary">
+                  <div className="text-5xl mb-4">{currentAgentData?.emoji || '💬'}</div>
+                  <h2 className="text-xl font-semibold text-text-primary mb-2">{currentAgentData?.name || '에이전트'}</h2>
+                  <p className="text-sm">메시지를 입력하면 새 대화가 시작됩니다.</p>
+                </div>
+              )}
               <ChatInput onSendMessage={sendMessage} onStop={stopChat} disabled={!connectionStatus.connected} isLoading={isLoading} agentName={currentAgentData?.name} model={currentAgentData?.model} agents={agents} currentAgentId={currentAgentData?.id} />
             </>
           ) : currentView === 'agents' ? (
