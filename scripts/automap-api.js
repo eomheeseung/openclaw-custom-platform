@@ -464,6 +464,115 @@ function buildRawEmail({ from, to, cc, subject, body, bodyHtml }) {
   return Buffer.from(raw).toString('base64url');
 }
 
+// ===== Mail Pending Queue (사용자 확인 강제) =====
+// 봇이 어떤 에이전트로 동작하든, 어떤 프롬프트를 갖든 mail/send를 거치면 이 큐에 적재만 됨.
+// 실제 발송은 UI의 [발송] 버튼 → /api/mail/send-confirm.
+const pendingMails = new Map(); // mailId -> { userNN, payload, confirmToken, createdAt, from }
+const MAIL_PENDING_TTL_MS = 10 * 60 * 1000;
+
+function cleanupPendingMails() {
+  const now = Date.now();
+  for (const [id, m] of pendingMails) {
+    if (now - m.createdAt > MAIL_PENDING_TTL_MS) pendingMails.delete(id);
+  }
+}
+setInterval(cleanupPendingMails, 60 * 1000).unref?.();
+
+function makeMailPreview(payload) {
+  const bodyText = (payload.body || '').toString();
+  const htmlText = (payload.bodyHtml || '').toString().replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  const src = bodyText || htmlText;
+  return {
+    to: payload.to,
+    cc: payload.cc || null,
+    subject: payload.subject,
+    body: src,
+    bodyPreview: src.length > 800 ? src.slice(0, 800) + '…' : src,
+    bodyLength: src.length,
+  };
+}
+
+async function actuallySendMail(userNN, payload) {
+  const { to, cc, subject, body, bodyHtml, from: fromOverride } = payload;
+  const resolvedTo = resolveEmail(to);
+  const resolvedCc = cc ? resolveEmail(cc) : cc;
+  const token = loadGoogleToken(userNN);
+  if (!token?.email) throw new Error(`No email configured for user${userNN}`);
+  // from은 기본 토큰의 이메일, 사용자가 명시 override 시 그것 사용 (Gmail send-as 별칭일 때만 실제로 적용됨)
+  const from = fromOverride || token.email;
+
+  let fixedSubject = subject;
+  if (subject.includes('주간보고')) {
+    const week = getWeekRange();
+    const correctRange = `${week.monday}~${week.friday}`;
+    fixedSubject = fixedSubject.replace(/\[주간보고\]\[[^\]]*\]/, `[주간보고][${correctRange}]`);
+    if (!fixedSubject.includes(`[${correctRange}]`)) {
+      fixedSubject = `[주간보고][${correctRange}]` + fixedSubject.replace(/\[주간보고\]/, '');
+    }
+  }
+  let fixedBody = body || '';
+  if (subject.includes('주간보고') && fixedBody.includes('기간')) {
+    const week = getWeekRange();
+    const correctRange = `${week.monday}~${week.friday}`;
+    fixedBody = fixedBody.replace(/기간\([^)]*\)/, `기간(${correctRange})`);
+    fixedBody = fixedBody.replace(/기간[:\s]*\d{4}[-년]\s*\d{1,2}[-월]\s*\d{1,2}[일]?\s*~\s*\d{4}[-년]\s*\d{1,2}[-월]\s*\d{1,2}[일]?/, `기간: ${week.monday} ~ ${week.friday}`);
+    fixedBody = fixedBody.replace(/기간[:\s]*\d{1,2}월\s*\d{1,2}일\s*~\s*\d{1,2}월\s*\d{1,2}일/, `기간: ${week.monday} ~ ${week.friday}`);
+  }
+
+  const accessToken = await getValidAccessToken(userNN);
+  const raw = buildRawEmail({ from, to: resolvedTo, cc: resolvedCc, subject: fixedSubject, body: fixedBody, bodyHtml });
+  const result = await gmailApiRequest('POST',
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+    accessToken, { raw });
+  if (result.status >= 400) {
+    const e = new Error(result.data?.error?.message || 'Send failed');
+    e.gmailStatus = result.status;
+    throw e;
+  }
+  return { from, resolvedTo, resolvedCc, fixedSubject, result };
+}
+
+// ===== 최근 수신자 저장 (UI 자동완성용) =====
+const RECENT_CAP = 50;
+function recentRecipientsFile(userNN) {
+  return path.join(__dirname, '..', 'data', `user${userNN}`, 'recent-recipients.json');
+}
+function loadRecentRecipients(userNN) {
+  try {
+    const data = JSON.parse(fs.readFileSync(recentRecipientsFile(userNN), 'utf8'));
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+function saveRecentRecipients(userNN, list) {
+  try {
+    const file = recentRecipientsFile(userNN);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(list, null, 2));
+  } catch (e) { console.error('[recent] save error:', e.message); }
+}
+function recordRecipientUse(userNN, addrList) {
+  if (!addrList) return;
+  const tokens = String(addrList).split(',').map(s => s.trim()).filter(Boolean);
+  if (tokens.length === 0) return;
+  const list = loadRecentRecipients(userNN);
+  const now = Date.now();
+  for (const tok of tokens) {
+    const email = tok.includes('@') ? tok : MEMBER_MAP[tok];
+    if (!email) continue;
+    const name = EMAIL_TO_NAME[email] || null;
+    const idx = list.findIndex(r => r.email === email);
+    if (idx >= 0) {
+      list[idx].lastUsed = now;
+      if (name && !list[idx].name) list[idx].name = name;
+    } else {
+      list.push({ email, name, lastUsed: now });
+    }
+  }
+  list.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+  if (list.length > RECENT_CAP) list.length = RECENT_CAP;
+  saveRecentRecipients(userNN, list);
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -714,6 +823,63 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/admin/keys — Moonshot 멀티키 상태 (마스킹 + live/suspended 체크)
+  if (req.method === 'GET' && url.pathname === '/api/admin/keys') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const rawList = (process.env.MOONSHOT_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean);
+      const primary = (process.env.MOONSHOT_API_KEY || '').trim();
+      const keys = rawList.length > 0 ? rawList : (primary ? [primary] : []);
+      const masked = (k) => k.length > 14 ? `${k.slice(0,8)}…${k.slice(-4)}` : '***';
+
+      // 각 키 ping (Moonshot chat completions로 빠른 1토큰 호출)
+      const pingKey = (key) => new Promise((resolve) => {
+        const data = JSON.stringify({ model: 'kimi-k2.6', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 });
+        const req2 = https.request({
+          method: 'POST', hostname: 'api.moonshot.ai', path: '/v1/chat/completions',
+          headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+          timeout: 8000,
+        }, (resp) => {
+          let body = '';
+          resp.on('data', c => body += c);
+          resp.on('end', () => {
+            let status = 'unknown';
+            let reason = null;
+            if (resp.statusCode === 200) status = 'live';
+            else if (resp.statusCode === 401 || resp.statusCode === 403) { status = 'auth_error'; }
+            else if (resp.statusCode === 429) {
+              status = 'suspended_or_rate_limit';
+              try { const j = JSON.parse(body); reason = j.error?.message || null; } catch {}
+            } else status = `http_${resp.statusCode}`;
+            resolve({ status, httpCode: resp.statusCode, reason });
+          });
+        });
+        req2.on('error', e => resolve({ status: 'network_error', reason: e.message }));
+        req2.on('timeout', () => { req2.destroy(); resolve({ status: 'timeout' }); });
+        req2.write(data);
+        req2.end();
+      });
+
+      Promise.all(keys.map((k, i) => pingKey(k).then(r => ({
+        label: `key${i + 1}`,
+        masked: masked(k),
+        ...r,
+      })))).then((results) => {
+        jsonRes(res, 200, {
+          ok: true,
+          provider: 'moonshot',
+          count: keys.length,
+          mode: keys.length > 1 ? 'round-robin' : 'single',
+          keys: results,
+        });
+      }).catch(e => jsonRes(res, 500, { ok: false, error: e.message }));
+    } catch (e) {
+      jsonRes(res, 500, { ok: false, error: e.message });
+    }
+    return;
+  }
+
   // ===== Admin API =====
 
   // GET /api/admin/users
@@ -943,6 +1109,16 @@ const server = http.createServer(async (req, res) => {
     const userNN = resolveBidUserNN(params);
     if (!userNN) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
     const r = await runBidFetch(userNN, ['assigned']);
+    jsonRes(res, r.ok ? 200 : 500, r);
+    return;
+  }
+
+  // POST /api/bid/logout — bid.tideflo.work 쿠키 삭제 + 탭 로그인 페이지로 이동
+  if (url.pathname === '/api/bid/logout' && req.method === 'POST') {
+    const params = await parseBody(req);
+    const userNN = resolveBidUserNN(params);
+    if (!userNN) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    const r = await runBidFetch(userNN, ['logout'], 15000);
     jsonRes(res, r.ok ? 200 : 500, r);
     return;
   }
@@ -1186,7 +1362,8 @@ const server = http.createServer(async (req, res) => {
 
   // ===== Mail API =====
 
-  // POST /api/mail/send
+  // POST /api/mail/send — 사용자 확인 대기열에 등록 (실제 발송은 send-confirm에서)
+  // 봇이 어떤 에이전트로 동작하든, 어떤 프롬프트를 갖든 이 엔드포인트를 거치므로 사용자 확인 강제됨
   if (req.method === 'POST' && url.pathname === '/api/mail/send') {
     try {
       const params = await parseBody(req);
@@ -1194,57 +1371,128 @@ const server = http.createServer(async (req, res) => {
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!to || !subject) { jsonRes(res, 400, { ok: false, error: 'Missing to or subject' }); return; }
 
-      // 이름 → 이메일 자동 변환
+      const token = loadGoogleToken(userNN);
+      if (!token?.email) { jsonRes(res, 400, { ok: false, error: `No email configured for user${userNN}` }); return; }
+
+      // 받는 사람 이름 → 이메일 변환은 미리보기 단계에서도 적용 (사용자가 실제 발송될 주소를 보고 확정하도록)
       const resolvedTo = resolveEmail(to);
       const resolvedCc = cc ? resolveEmail(cc) : cc;
 
-      const token = loadGoogleToken(userNN);
-      if (!token?.email) { jsonRes(res, 400, { ok: false, error: `No email configured for user${userNN}` }); return; }
-      const from = token.email;
+      const payload = { to: resolvedTo, cc: resolvedCc, subject, body, bodyHtml };
+      const mailId = crypto.randomBytes(8).toString('hex');
+      const confirmToken = crypto.randomBytes(16).toString('hex');
+      pendingMails.set(mailId, { userNN, payload, confirmToken, createdAt: Date.now(), from: token.email });
+      cleanupPendingMails();
 
-      // 주간보고 제목이면 날짜를 서버가 강제 교체
-      let fixedSubject = subject;
-      if (subject.includes('주간보고')) {
-        const week = getWeekRange();
-        const correctRange = `${week.monday}~${week.friday}`;
-        // [주간보고][날짜~날짜] 패턴을 올바른 날짜로 교체
-        fixedSubject = fixedSubject.replace(/\[주간보고\]\[[^\]]*\]/, `[주간보고][${correctRange}]`);
-        // 패턴이 없으면 추가
-        if (!fixedSubject.includes(`[${correctRange}]`)) {
-          fixedSubject = `[주간보고][${correctRange}]` + fixedSubject.replace(/\[주간보고\]/, '');
-        }
-      }
-
-      // 본문에서도 잘못된 기간을 교체
-      let fixedBody = body || '';
-      if (subject.includes('주간보고') && fixedBody.includes('기간')) {
-        const week = getWeekRange();
-        const correctRange = `${week.monday}~${week.friday}`;
-        // 기간(날짜~날짜) 패턴 교체
-        fixedBody = fixedBody.replace(/기간\([^)]*\)/, `기간(${correctRange})`);
-        // 기간: 날짜 ~ 날짜 패턴 교체
-        fixedBody = fixedBody.replace(/기간[:\s]*\d{4}[-년]\s*\d{1,2}[-월]\s*\d{1,2}[일]?\s*~\s*\d{4}[-년]\s*\d{1,2}[-월]\s*\d{1,2}[일]?/, `기간: ${week.monday} ~ ${week.friday}`);
-        fixedBody = fixedBody.replace(/기간[:\s]*\d{1,2}월\s*\d{1,2}일\s*~\s*\d{1,2}월\s*\d{1,2}일/, `기간: ${week.monday} ~ ${week.friday}`);
-      }
-
-      const accessToken = await getValidAccessToken(userNN);
-      const raw = buildRawEmail({ from, to: resolvedTo, cc: resolvedCc, subject: fixedSubject, body: fixedBody, bodyHtml });
-      const result = await gmailApiRequest('POST',
-        'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
-        accessToken, { raw });
-
-      if (result.status >= 400) {
-        console.error(`[mail] send failed for user${userNN}:`, result.data);
-        jsonRes(res, result.status, { ok: false, error: result.data?.error?.message || 'Send failed' });
-        return;
-      }
-      console.log(`[mail] sent from ${from} to ${resolvedTo} cc=${resolvedCc || ''} subject="${subject}"`);
-      const week = getWeekRange();
-      jsonRes(res, 200, { ok: true, messageId: result.data.id, threadId: result.data.threadId, from, weekRange: `${week.monday}~${week.friday}`, today: week.today });
+      const preview = makeMailPreview(payload);
+      console.log(`[mail] PENDING user${userNN} to=${preview.to} subject="${preview.subject}" mailId=${mailId}`);
+      jsonRes(res, 200, {
+        ok: true,
+        pending: true,
+        mailId,
+        from: token.email,
+        preview,
+        ttlSeconds: Math.floor(MAIL_PENDING_TTL_MS / 1000),
+        message: '⚠️ 메일은 아직 발송되지 않았습니다. 사용자가 워크플로 화면 상단의 [메일 발송 대기] 카드에서 [발송] 버튼을 클릭해야 실제로 발송됩니다. 10분 안에 확인하지 않으면 자동 취소됩니다. 봇은 사용자에게 "확인 후 발송 버튼을 눌러달라"고 안내하세요.',
+      });
     } catch (err) {
-      console.error('[mail] send error:', err.message);
+      console.error('[mail] stage error:', err.message);
       jsonRes(res, 500, { ok: false, error: err.message });
     }
+    return;
+  }
+
+  // POST /api/mail/send-confirm — pending 메일 실제 발송
+  if (req.method === 'POST' && url.pathname === '/api/mail/send-confirm') {
+    try {
+      const params = await parseBody(req);
+      const { mailId, confirmToken, overrides } = params;
+      if (!mailId || !confirmToken) { jsonRes(res, 400, { ok: false, error: 'Missing mailId or confirmToken' }); return; }
+      const m = pendingMails.get(mailId);
+      if (!m) { jsonRes(res, 404, { ok: false, error: 'Mail not found or expired' }); return; }
+      if (m.confirmToken !== confirmToken) { jsonRes(res, 403, { ok: false, error: 'Invalid confirmToken' }); return; }
+      if (Date.now() - m.createdAt > MAIL_PENDING_TTL_MS) {
+        pendingMails.delete(mailId);
+        jsonRes(res, 410, { ok: false, error: 'Mail expired' });
+        return;
+      }
+      // 사용자가 UI에서 수정한 내용이 있으면 그것으로 발송
+      const finalPayload = overrides && typeof overrides === 'object'
+        ? { ...m.payload, ...overrides }
+        : m.payload;
+      pendingMails.delete(mailId);
+      const sent = await actuallySendMail(m.userNN, finalPayload);
+      // 발송 성공 → 최근 수신자 기록 (UI 자동완성용)
+      try {
+        recordRecipientUse(m.userNN, finalPayload.to);
+        if (finalPayload.cc) recordRecipientUse(m.userNN, finalPayload.cc);
+      } catch (e) { console.error('[recent] record error:', e.message); }
+      const week = getWeekRange();
+      console.log(`[mail] CONFIRMED user${m.userNN} from=${sent.from} to=${sent.resolvedTo} subject="${sent.fixedSubject}" id=${sent.result.data.id}`);
+      jsonRes(res, 200, { ok: true, messageId: sent.result.data.id, threadId: sent.result.data.threadId, from: sent.from, weekRange: `${week.monday}~${week.friday}`, today: week.today });
+    } catch (err) {
+      console.error('[mail] confirm error:', err.message);
+      jsonRes(res, err.gmailStatus || 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  // POST /api/mail/cancel — 대기 중인 메일 취소
+  if (req.method === 'POST' && url.pathname === '/api/mail/cancel') {
+    try {
+      const params = await parseBody(req);
+      const { mailId, confirmToken } = params;
+      if (!mailId) { jsonRes(res, 400, { ok: false, error: 'Missing mailId' }); return; }
+      const m = pendingMails.get(mailId);
+      if (!m) { jsonRes(res, 404, { ok: false, error: 'Mail not found' }); return; }
+      if (confirmToken && m.confirmToken !== confirmToken) {
+        jsonRes(res, 403, { ok: false, error: 'Invalid confirmToken' });
+        return;
+      }
+      pendingMails.delete(mailId);
+      console.log(`[mail] CANCELED user${m.userNN} mailId=${mailId}`);
+      jsonRes(res, 200, { ok: true, mailId });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  // GET /api/mail/recipients?userNN=NN — 자동완성용 수신자 목록 (최근 사용자 + 직원록 머지)
+  if (req.method === 'GET' && url.pathname === '/api/mail/recipients') {
+    const userNN = url.searchParams.get('userNN');
+    if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    const recent = loadRecentRecipients(userNN); // 최근순 정렬됨
+    const seen = new Set(recent.map(r => r.email));
+    const items = recent.map(r => ({ email: r.email, name: r.name || EMAIL_TO_NAME[r.email] || null, source: 'recent', lastUsed: r.lastUsed }));
+    // 직원록에서 아직 안 보낸 사람 추가
+    for (const [name, email] of Object.entries(MEMBER_MAP)) {
+      if (seen.has(email)) continue;
+      items.push({ email, name, source: 'employee', lastUsed: null });
+    }
+    jsonRes(res, 200, { ok: true, count: items.length, items });
+    return;
+  }
+
+  // GET /api/mail/pending?userNN=NN — 해당 유저의 대기 메일 목록
+  if (req.method === 'GET' && url.pathname === '/api/mail/pending') {
+    const userNN = url.searchParams.get('userNN');
+    if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+    cleanupPendingMails();
+    const items = [];
+    for (const [id, m] of pendingMails) {
+      if (m.userNN !== userNN) continue;
+      items.push({
+        mailId: id,
+        confirmToken: m.confirmToken,
+        from: m.from,
+        preview: makeMailPreview(m.payload),
+        createdAt: m.createdAt,
+        expiresAt: m.createdAt + MAIL_PENDING_TTL_MS,
+      });
+    }
+    items.sort((a, b) => a.createdAt - b.createdAt);
+    jsonRes(res, 200, { ok: true, count: items.length, items });
     return;
   }
 

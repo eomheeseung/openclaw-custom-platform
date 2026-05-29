@@ -13,6 +13,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { HelpModal } from './components/HelpModal';
 import { VNCPanel } from './components/VNCPanel';
 import { WorkflowView } from './components/WorkflowView';
+import { PendingMailBanner } from './components/PendingMailBanner';
 import { IntegrationsPage } from './components/IntegrationsPage';
 import type { Agent, Session } from './types';
 
@@ -433,6 +434,9 @@ function App() {
 
         {/* ─── MAIN CONTENT ─── */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+          {/* 메일 발송 대기 배너 — 모든 뷰에 노출 */}
+          <PendingMailBanner token={token} />
 
           {/* Chat header — only in chat view */}
           {currentView === 'chat' && currentAgentData && (
