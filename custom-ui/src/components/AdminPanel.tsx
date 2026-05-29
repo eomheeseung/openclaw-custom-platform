@@ -99,6 +99,8 @@ export function AdminPanel() {
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [stats, setStats] = useState<ContainerStats[]>([]);
   const [config, setConfig] = useState<{ apiKeys: Record<string, boolean>; totalSlots: number; usersAssigned: number; activeSessions: number } | null>(null);
+  const [moonshotKeys, setMoonshotKeys] = useState<{ count: number; mode: string; keys: Array<{ label: string; masked: string; status: string; httpCode?: number; reason?: string | null }> } | null>(null);
+  const [moonshotKeysLoading, setMoonshotKeysLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -146,6 +148,16 @@ export function AdminPanel() {
       const d = await r.json();
       if (d.ok) setStats(d.stats);
     } catch { /* ignore */ }
+  }, []);
+
+  const fetchMoonshotKeys = useCallback(async () => {
+    setMoonshotKeysLoading(true);
+    try {
+      const r = await fetch('/api/admin/keys', { credentials: 'include' });
+      const d = await r.json();
+      if (d.ok) setMoonshotKeys(d);
+    } catch { /* ignore */ }
+    finally { setMoonshotKeysLoading(false); }
   }, []);
 
   const fetchConfig = useCallback(async () => {
@@ -208,6 +220,10 @@ export function AdminPanel() {
   useEffect(() => {
     if (tab === 'containers') { fetchContainers(); fetchStats(); }
   }, [tab]);
+
+  useEffect(() => {
+    if (tab === 'config') fetchMoonshotKeys();
+  }, [tab, fetchMoonshotKeys]);
 
   const handleAssign = async () => {
     if (!assignEmail.trim() || !assignSlot) { showMsg('이메일과 슬롯을 입력하세요', true); return; }
@@ -702,6 +718,54 @@ export function AdminPanel() {
       {/* Config Tab */}
       {tab === 'config' && config && (
         <div className="space-y-4">
+          {/* Moonshot 멀티키 상태 카드 */}
+          <div className="bg-card border border-border-color rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                <Settings className="w-4 h-4" /> Moonshot 멀티키 ({moonshotKeys?.mode === 'round-robin' ? 'Round-Robin' : 'Single'})
+              </h3>
+              <button onClick={fetchMoonshotKeys} disabled={moonshotKeysLoading}
+                className="text-xs px-2 py-1 rounded border border-border-color hover:bg-background transition-colors disabled:opacity-50">
+                {moonshotKeysLoading ? '확인 중...' : '새로고침'}
+              </button>
+            </div>
+            {moonshotKeys ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {moonshotKeys.keys.map((k) => {
+                  const statusColor =
+                    k.status === 'live' ? 'text-green-400 border-green-400/30 bg-green-400/5' :
+                    k.status === 'auth_error' ? 'text-red-400 border-red-400/30 bg-red-400/5' :
+                    k.status === 'suspended_or_rate_limit' ? 'text-yellow-400 border-yellow-400/30 bg-yellow-400/5' :
+                    'text-text-secondary border-border-color bg-background';
+                  const statusLabel =
+                    k.status === 'live' ? '✅ 정상' :
+                    k.status === 'auth_error' ? '❌ 인증 실패' :
+                    k.status === 'suspended_or_rate_limit' ? '⚠️ 한도/잔액 부족' :
+                    k.status === 'timeout' ? '⏱ 응답 없음' :
+                    k.status === 'network_error' ? '🔌 네트워크 오류' :
+                    k.status;
+                  return (
+                    <div key={k.label} className={`p-4 rounded-lg border ${statusColor}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-semibold text-text-primary uppercase">{k.label}</span>
+                        <span className="text-xs">{statusLabel}</span>
+                      </div>
+                      <p className="text-xs font-mono text-text-secondary">{k.masked}</p>
+                      {k.reason && <p className="text-[10px] mt-1 text-text-secondary/80 break-all">{k.reason}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-text-secondary">{moonshotKeysLoading ? '확인 중...' : '데이터 없음'}</p>
+            )}
+            {moonshotKeys && moonshotKeys.count > 1 && (
+              <p className="text-xs text-text-secondary mt-3">
+                OpenClaw가 <strong>{moonshotKeys.count}개 키</strong>를 round-robin으로 사용 중. 사용자 요청마다 번갈아 호출.
+              </p>
+            )}
+          </div>
+
           <div className="bg-card border border-border-color rounded-xl p-5">
             <h3 className="font-semibold text-text-primary mb-4 flex items-center gap-2"><Settings className="w-4 h-4" /> API 키 상태</h3>
             <div className="space-y-2">

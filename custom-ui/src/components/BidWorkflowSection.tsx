@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, CheckCircle, AlertCircle, Loader2, RefreshCw, ListChecks, FileSearch, Mail, Send, ChevronDown, ChevronRight, Sliders, HelpCircle } from 'lucide-react';
+import { FileText, CheckCircle, AlertCircle, Loader2, RefreshCw, ListChecks, FileSearch, Mail, Send, ChevronDown, ChevronRight, Sliders, HelpCircle, LogOut } from 'lucide-react';
 import { BidHelpModal } from './BidHelpModal';
 
 interface Props {
@@ -42,6 +42,9 @@ async function checkBidLogin(userNN: string): Promise<LoginStatus> {
     if (typeof err === 'string' && (err.includes('ECONNREFUSED') && err.includes('18800'))) return { kind: 'chrome-down', detail: err };
     if (typeof err === 'string' && err.includes('쿠키 없음')) return { kind: 'not-logged-in', reason: '쿠키 없음' };
     if (typeof err === 'string' && err.includes('no page target')) return { kind: 'not-logged-in', reason: 'Chrome 탭 없음' };
+    if (typeof err === 'string' && /HTTP\s*30[127]/.test(err)) return { kind: 'not-logged-in', reason: '세션 만료 — Google 재로그인 필요' };
+    if (typeof err === 'string' && /HTTP\s*401/.test(err)) return { kind: 'not-logged-in', reason: '인증 만료' };
+    if (typeof err === 'string' && /HTTP\s*403/.test(err)) return { kind: 'not-logged-in', reason: '권한 없음 — 재로그인 필요' };
     return { kind: 'error', message: err };
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
@@ -73,6 +76,22 @@ export function BidWorkflowSection({ token, onSendMessage, onOpenVNC, onUnpin }:
   }, [slot]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  const handleLogout = useCallback(async () => {
+    if (slot === null) return;
+    if (!window.confirm('bid.tideflo.work에서 로그아웃할까요?\n\nChrome의 bid 쿠키가 삭제되고, 다시 사용하려면 VNC를 열어서 직접 로그인해야 합니다.')) return;
+    setStatus({ kind: 'checking' });
+    try {
+      await fetch('/api/bid/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userNN: slotToStr(slot) }),
+      });
+    } catch (e) {
+      console.error('logout failed', e);
+    }
+    setTimeout(refresh, 1500);
+  }, [slot, refresh]);
 
   const detailSpec = {
     normal: { lines: '30~40줄', bullets: '불릿 7~10개', extra: '' },
@@ -193,13 +212,25 @@ gcurl POST /api/mail/send '{"to":"${mailTo.trim()}","subject":"${subject}","body
                   <CheckCircle className="w-4 h-4 text-green-400" />
                   <span className="text-green-400 font-medium">로그인 완료</span>
                   <span className="text-text-secondary">— 오늘 배정 {status.count}건</span>
+                  <button
+                    onClick={handleLogout}
+                    className="ml-auto flex items-center gap-1 text-xs text-text-secondary hover:text-red-400 px-2 py-1 border border-border-color hover:border-red-400/40 rounded transition-colors"
+                    title="bid.tideflo.work 쿠키 삭제하고 로그아웃"
+                  >
+                    <LogOut className="w-3 h-3" /> 로그아웃
+                  </button>
                 </div>
               )}
               {status.kind === 'not-logged-in' && (
-                <div className="flex items-center gap-2 text-sm">
-                  <AlertCircle className="w-4 h-4 text-amber-500" />
-                  <span className="text-amber-500 font-medium">로그인 필요</span>
-                  <span className="text-text-secondary text-xs">({status.reason})</span>
+                <div className="text-sm space-y-2">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                    <span className="text-amber-500 font-medium">로그인 필요</span>
+                    <span className="text-text-secondary text-xs">({status.reason})</span>
+                  </div>
+                  <button onClick={onOpenVNC} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-accent/10 hover:bg-accent/20 border border-accent/30 rounded text-sm text-accent">
+                    VNC 열어서 로그인
+                  </button>
                 </div>
               )}
               {status.kind === 'chrome-down' && (

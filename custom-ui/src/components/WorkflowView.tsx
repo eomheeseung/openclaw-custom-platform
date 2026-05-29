@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Briefcase, Plus, Inbox, ChevronRight, ChevronLeft, LayoutGrid } from 'lucide-react';
 import { BidWorkflowSection } from './BidWorkflowSection';
+import { RagWorkflowSection } from './RagWorkflowSection';
 
 interface WorkflowViewProps {
   token: string;
@@ -22,12 +23,14 @@ interface CatalogItem {
   available: boolean;
 }
 
-const CATALOG: CatalogItem[] = [
-  { id: 'bid', name: '제안서 / 입찰', emoji: '📋', description: '오늘 배정된 입찰공고 요약·상세·메일 발송', available: true },
-  { id: 'mail', name: '메일 자동화', emoji: '📧', description: '주간보고·답장 초안 (준비 중)', available: false },
-  { id: 'schedule', name: '일정 관리', emoji: '📅', description: '회의·알림 (준비 중)', available: false },
-  { id: 'data', name: '데이터 분석', emoji: '📊', description: 'Drive·RAG (준비 중)', available: false },
-];
+function buildCatalog(_token: string): CatalogItem[] {
+  return [
+    { id: 'bid', name: '제안서 / 입찰', emoji: '📋', description: '오늘 배정된 입찰공고 요약·상세·메일 발송', available: true },
+    { id: 'mail', name: '메일 자동화', emoji: '📧', description: '주간보고·답장 초안 (준비 중)', available: false },
+    { id: 'schedule', name: '일정 관리', emoji: '📅', description: '회의·알림 (준비 중)', available: false },
+    { id: 'data', name: '데이터 분석', emoji: '📊', description: 'Drive RAG 검색 (시범 운영)', available: true },
+  ];
+}
 
 const PINS_BASE = 'tideclaw-workflow-pins';
 const CATALOG_COLLAPSED_BASE = 'tideclaw-workflow-catalog-collapsed';
@@ -69,6 +72,13 @@ export function WorkflowView({ token, onSendMessage, onOpenVNC }: WorkflowViewPr
         onSendMessage={onSendMessage}
         onOpenVNC={onOpenVNC}
         onUnpin={() => togglePin('bid')}
+      />
+    );
+    if (id === 'data') return (
+      <RagWorkflowSection
+        key="data"
+        token={token}
+        onUnpin={() => togglePin('data')}
       />
     );
     return null;
@@ -126,7 +136,7 @@ export function WorkflowView({ token, onSendMessage, onOpenVNC }: WorkflowViewPr
             </button>
           </div>
           <div className="space-y-2">
-            {CATALOG.map(item => {
+            {buildCatalog(token).map(item => {
               const pinned = pins.includes(item.id);
               return (
                 <button
