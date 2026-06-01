@@ -1402,6 +1402,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/mail/send-now — 컨펌 카드 우회, 즉시 발송 (cron/예약 메일 전용)
+  // 채팅 컨텍스트에서 봇이 직접 호출하면 안 됨. BOOTSTRAP 룰로 통제.
+  if (req.method === 'POST' && url.pathname === '/api/mail/send-now') {
+    try {
+      const params = await parseBody(req);
+      const { userNN, to, cc, subject, body, bodyHtml, from } = params;
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      if (!to || !subject) { jsonRes(res, 400, { ok: false, error: 'Missing to or subject' }); return; }
+      const sent = await actuallySendMail(userNN, { to, cc, subject, body, bodyHtml, from });
+      recordRecipientUse(userNN, to);
+      if (cc) recordRecipientUse(userNN, cc);
+      console.log(`[mail] SENT-NOW user${userNN} to=${to} subject="${subject}" messageId=${sent?.id || 'n/a'}`);
+      jsonRes(res, 200, { ok: true, sent: true, messageId: sent?.id });
+    } catch (err) {
+      console.error('[mail] send-now error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   // POST /api/mail/send-confirm — pending 메일 실제 발송
   if (req.method === 'POST' && url.pathname === '/api/mail/send-confirm') {
     try {
@@ -2920,7 +2940,7 @@ const server = http.createServer(async (req, res) => {
       const ccMemberIds = url.searchParams.get('ccMemberIds') || '';
       let apiUrl = `https://api.dooray.com/project/v1/projects/${projectId}/posts?page=${page}&size=${size}&order=-updatedAt`;
       if (status) apiUrl += `&workflowClasses=${status}`;
-      if (memberIds) apiUrl += `&memberIds=${memberIds}`;
+      if (memberIds) apiUrl += `&toMemberIds=${memberIds}`;
       if (ccMemberIds) apiUrl += `&ccMemberIds=${ccMemberIds}`;
       const result = await doorayApiRequest('GET', apiUrl, token);
       if (result.status >= 400) { jsonRes(res, result.status, { ok: false, error: result.data?.message || 'Dooray API error' }); return; }
