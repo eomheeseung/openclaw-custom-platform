@@ -432,35 +432,74 @@ function getWeekRange() {
   return { monday: fmt(mon), friday: fmt(fri), today: fmt(now) };
 }
 
-function buildRawEmail({ from, to, cc, subject, body, bodyHtml }) {
-  const boundary = 'boundary_' + crypto.randomBytes(16).toString('hex');
-  const lines = [
-    `From: ${from}`,
-    `To: ${to}`,
-  ];
-  if (cc) lines.push(`Cc: ${cc}`);
-  lines.push(
-    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+/* attachments: [{ filename, mimeType, data(base64 string) }] — 있으면 multipart/mixed wrapper.
+   data는 base64 인코딩된 문자열. mimeType 누락 시 application/octet-stream. */
+function buildRawEmail({ from, to, cc, subject, body, bodyHtml, attachments }) {
+  const innerBoundary = 'alt_' + crypto.randomBytes(12).toString('hex');
+  const hasAttach = Array.isArray(attachments) && attachments.length > 0;
+
+  /* 본문 multipart/alternative 블록 (text + html) */
+  const altLines = [
+    `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
     '',
-    `--${boundary}`,
+    `--${innerBoundary}`,
     'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
     '',
     Buffer.from(body || '').toString('base64'),
-  );
+  ];
   if (bodyHtml) {
-    lines.push(
-      `--${boundary}`,
+    altLines.push(
+      `--${innerBoundary}`,
       'Content-Type: text/html; charset=UTF-8',
       'Content-Transfer-Encoding: base64',
       '',
       Buffer.from(bodyHtml).toString('base64'),
     );
   }
-  lines.push(`--${boundary}--`);
-  const raw = lines.join('\r\n');
+  altLines.push(`--${innerBoundary}--`);
+
+  const headerLines = [`From: ${from}`, `To: ${to}`];
+  if (cc) headerLines.push(`Cc: ${cc}`);
+  headerLines.push(
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+    'MIME-Version: 1.0',
+  );
+
+  let raw;
+  if (!hasAttach) {
+    /* 첨부 없음: 기존 동작 — 헤더에 alternative content-type 직접 박음 */
+    raw = [...headerLines, ...altLines].join('\r\n');
+  } else {
+    /* 첨부 있음: multipart/mixed wrapper. */
+    const outerBoundary = 'mix_' + crypto.randomBytes(12).toString('hex');
+    const parts = [
+      ...headerLines,
+      `Content-Type: multipart/mixed; boundary="${outerBoundary}"`,
+      '',
+      `--${outerBoundary}`,
+      ...altLines,
+    ];
+    for (const a of attachments) {
+      const filename = a.filename || 'attachment';
+      const mime = a.mimeType || 'application/octet-stream';
+      const dataB64 = typeof a.data === 'string' ? a.data.replace(/\s+/g, '') : '';
+      if (!dataB64) continue;
+      /* RFC 2047 헤더 인코딩 — 한글 파일명 호환 */
+      const encName = `=?UTF-8?B?${Buffer.from(filename).toString('base64')}?=`;
+      parts.push(
+        `--${outerBoundary}`,
+        `Content-Type: ${mime}; name="${encName}"`,
+        'Content-Transfer-Encoding: base64',
+        `Content-Disposition: attachment; filename="${encName}"`,
+        '',
+        /* base64는 76자마다 줄바꿈하는 게 RFC 권장 — gmail은 안 해도 받음 */
+        dataB64.match(/.{1,76}/g)?.join('\r\n') || dataB64,
+      );
+    }
+    parts.push(`--${outerBoundary}--`);
+    raw = parts.join('\r\n');
+  }
   return Buffer.from(raw).toString('base64url');
 }
 
@@ -468,6 +507,8 @@ function buildRawEmail({ from, to, cc, subject, body, bodyHtml }) {
 // 봇이 어떤 에이전트로 동작하든, 어떤 프롬프트를 갖든 mail/send를 거치면 이 큐에 적재만 됨.
 // 실제 발송은 UI의 [발송] 버튼 → /api/mail/send-confirm.
 const pendingMails = new Map(); // mailId -> { userNN, payload, confirmToken, createdAt, from }
+const briefCache = new Map();   // userNN -> { ts, data }
+const BRIEF_TTL_MS = 60_000;
 const MAIL_PENDING_TTL_MS = 10 * 60 * 1000;
 
 function cleanupPendingMails() {
@@ -493,7 +534,7 @@ function makeMailPreview(payload) {
 }
 
 async function actuallySendMail(userNN, payload) {
-  const { to, cc, subject, body, bodyHtml, from: fromOverride } = payload;
+  const { to, cc, subject, body, bodyHtml, from: fromOverride, attachments } = payload;
   const resolvedTo = resolveEmail(to);
   const resolvedCc = cc ? resolveEmail(cc) : cc;
   const token = loadGoogleToken(userNN);
@@ -520,7 +561,7 @@ async function actuallySendMail(userNN, payload) {
   }
 
   const accessToken = await getValidAccessToken(userNN);
-  const raw = buildRawEmail({ from, to: resolvedTo, cc: resolvedCc, subject: fixedSubject, body: fixedBody, bodyHtml });
+  const raw = buildRawEmail({ from, to: resolvedTo, cc: resolvedCc, subject: fixedSubject, body: fixedBody, bodyHtml, attachments });
   const result = await gmailApiRequest('POST',
     'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
     accessToken, { raw });
@@ -1367,7 +1408,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/mail/send') {
     try {
       const params = await parseBody(req);
-      const { userNN, to, cc, subject, body, bodyHtml } = params;
+      const { userNN, to, cc, subject, body, bodyHtml, attachments } = params;
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!to || !subject) { jsonRes(res, 400, { ok: false, error: 'Missing to or subject' }); return; }
 
@@ -1378,7 +1419,7 @@ const server = http.createServer(async (req, res) => {
       const resolvedTo = resolveEmail(to);
       const resolvedCc = cc ? resolveEmail(cc) : cc;
 
-      const payload = { to: resolvedTo, cc: resolvedCc, subject, body, bodyHtml };
+      const payload = { to: resolvedTo, cc: resolvedCc, subject, body, bodyHtml, attachments };
       const mailId = crypto.randomBytes(8).toString('hex');
       const confirmToken = crypto.randomBytes(16).toString('hex');
       pendingMails.set(mailId, { userNN, payload, confirmToken, createdAt: Date.now(), from: token.email });
@@ -1407,10 +1448,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/mail/send-now') {
     try {
       const params = await parseBody(req);
-      const { userNN, to, cc, subject, body, bodyHtml, from } = params;
+      const { userNN, to, cc, subject, body, bodyHtml, from, attachments } = params;
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!to || !subject) { jsonRes(res, 400, { ok: false, error: 'Missing to or subject' }); return; }
-      const sent = await actuallySendMail(userNN, { to, cc, subject, body, bodyHtml, from });
+      const sent = await actuallySendMail(userNN, { to, cc, subject, body, bodyHtml, from, attachments });
       recordRecipientUse(userNN, to);
       if (cc) recordRecipientUse(userNN, cc);
       console.log(`[mail] SENT-NOW user${userNN} to=${to} subject="${subject}" messageId=${sent?.id || 'n/a'}`);
@@ -1480,7 +1521,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/mail/recipients?userNN=NN — 자동완성용 수신자 목록 (최근 사용자 + 직원록 머지)
   if (req.method === 'GET' && url.pathname === '/api/mail/recipients') {
-    const userNN = url.searchParams.get('userNN');
+    const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
     if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
     const recent = loadRecentRecipients(userNN); // 최근순 정렬됨
     const seen = new Set(recent.map(r => r.email));
@@ -1496,7 +1537,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/mail/pending?userNN=NN — 해당 유저의 대기 메일 목록
   if (req.method === 'GET' && url.pathname === '/api/mail/pending') {
-    const userNN = url.searchParams.get('userNN');
+    const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
     if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
     cleanupPendingMails();
     const items = [];
@@ -1519,7 +1560,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/mail/search?userNN=01&q=from:me&max=10
   if (req.method === 'GET' && url.pathname === '/api/mail/search') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const query = url.searchParams.get('q') || '';
       const maxResults = parseInt(url.searchParams.get('max') || '10', 10);
       const pageToken = url.searchParams.get('page') || '';
@@ -1573,7 +1614,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/mail/read?userNN=01&id=<messageId>
   if (req.method === 'GET' && url.pathname === '/api/mail/read') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const messageId = url.searchParams.get('id');
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!messageId) { jsonRes(res, 400, { ok: false, error: 'Missing id' }); return; }
@@ -1633,7 +1674,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/drive/shared - List shared drives
   if (req.method === 'GET' && url.pathname === '/api/drive/shared') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
 
       const accessToken = await getValidAccessToken(userNN);
@@ -1655,7 +1696,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/drive/list?userNN=01&folderId=root&max=20
   if (req.method === 'GET' && url.pathname === '/api/drive/list') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const folderId = url.searchParams.get('folderId') || 'root';
       const maxResults = parseInt(url.searchParams.get('max') || '30', 10);
       const pageToken = url.searchParams.get('page') || '';
@@ -1697,7 +1738,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/drive/search?userNN=01&q=검색어&max=30
   if (req.method === 'GET' && url.pathname === '/api/drive/search') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const query = url.searchParams.get('q') || '';
       const maxResults = parseInt(url.searchParams.get('max') || '30', 10);
       const pageToken = url.searchParams.get('page') || '';
@@ -1998,7 +2039,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/drive/read?userNN=01&fileId=xxx
   if (req.method === 'GET' && url.pathname === '/api/drive/read') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const fileId = url.searchParams.get('fileId');
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!fileId) { jsonRes(res, 400, { ok: false, error: 'Missing fileId' }); return; }
@@ -2152,7 +2193,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/calendar/list?userNN=01&days=7
   if (req.method === 'GET' && url.pathname === '/api/calendar/list') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const days = parseInt(url.searchParams.get('days') || '7', 10);
       const q = url.searchParams.get('q') || '';
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
@@ -2192,9 +2233,87 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /api/calendar/today?userNN=01
+  /* GET /api/brief — 오늘 컨텍스트 집계 (다음 미팅 + 미답 메일).
+     컨테이너 IP 기반 resolveUserNN. 60초 캐시. 부분 실패는 silent. */
+  if (req.method === 'GET' && url.pathname === '/api/brief') {
+    try {
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+
+      const cached = briefCache.get(userNN);
+      if (cached && Date.now() - cached.ts < BRIEF_TTL_MS) {
+        jsonRes(res, 200, cached.data); return;
+      }
+
+      let accessToken;
+      try { accessToken = await getValidAccessToken(userNN); } catch { /* google 미연동 */ }
+
+      const out = {
+        ok: true,
+        userNN,
+        nextMeeting: null,
+        unread: { today: null, week: null, query: 'in:inbox - promotions/social/updates' },
+        generatedAt: Date.now(),
+      };
+
+      if (accessToken) {
+        const nowIso = new Date().toISOString();
+        const todayEndIso = new Date(new Date().setHours(23, 59, 59, 999)).toISOString();
+
+        /* 노이즈 제거 query — 받은편지함 + 광고/소셜/알림 제외 */
+        const baseQ = 'is:unread in:inbox -category:promotions -category:social -category:updates';
+        const qToday = `${baseQ} newer_than:1d`;
+        const qWeek = `${baseQ} newer_than:7d`;
+
+        const [calRes, mailTodayRes, mailWeekRes] = await Promise.all([
+          gmailApiRequest('GET',
+            `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(nowIso)}&timeMax=${encodeURIComponent(todayEndIso)}&singleEvents=true&orderBy=startTime&maxResults=10`,
+            accessToken).catch(() => ({ status: 599 })),
+          gmailApiRequest('GET',
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(qToday)}&maxResults=1`,
+            accessToken).catch(() => ({ status: 599 })),
+          gmailApiRequest('GET',
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(qWeek)}&maxResults=1`,
+            accessToken).catch(() => ({ status: 599 })),
+        ]);
+
+        if (calRes.status < 400 && calRes.data?.items) {
+          const upcoming = calRes.data.items.find(e => {
+            const start = e.start?.dateTime || e.start?.date;
+            return start && new Date(start).getTime() > Date.now();
+          });
+          if (upcoming) {
+            out.nextMeeting = {
+              title: upcoming.summary || '(제목 없음)',
+              start: upcoming.start?.dateTime || upcoming.start?.date || '',
+              location: upcoming.location || '',
+              allDay: !!upcoming.start?.date,
+            };
+          }
+        }
+
+        if (mailTodayRes.status < 400) {
+          const est = mailTodayRes.data?.resultSizeEstimate;
+          if (typeof est === 'number') out.unread.today = est;
+        }
+        if (mailWeekRes.status < 400) {
+          const est = mailWeekRes.data?.resultSizeEstimate;
+          if (typeof est === 'number') out.unread.week = est;
+        }
+      }
+
+      briefCache.set(userNN, { ts: Date.now(), data: out });
+      jsonRes(res, 200, out);
+    } catch (err) {
+      console.error('[brief] error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/calendar/today') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
 
       const accessToken = await getValidAccessToken(userNN);
@@ -2264,7 +2383,7 @@ const server = http.createServer(async (req, res) => {
   // DELETE /api/calendar/delete?userNN=01&eventId=xxx
   if (req.method === 'GET' && url.pathname === '/api/calendar/delete') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const eventId = url.searchParams.get('eventId');
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!eventId) { jsonRes(res, 400, { ok: false, error: 'Missing eventId' }); return; }
@@ -2525,7 +2644,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/drive/revisions?userNN=01&fileId=xxx
   if (req.method === 'GET' && url.pathname === '/api/drive/revisions') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const fileId = url.searchParams.get('fileId');
       const max = parseInt(url.searchParams.get('max') || '20', 10);
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
@@ -2744,7 +2863,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const data = JSON.parse(body);
-      const userNN = data.userNN || url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, data.userNN || url.searchParams.get('userNN'));
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let existing = {};
@@ -2775,7 +2894,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const data = JSON.parse(body);
-      const userNN = data.userNN || url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, data.userNN || url.searchParams.get('userNN'));
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let existing = {};
@@ -2792,7 +2911,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/integrations/load') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let data = {};
@@ -2835,7 +2954,7 @@ const server = http.createServer(async (req, res) => {
   // ============ FILE DOWNLOAD ============
   if (req.method === 'GET' && url.pathname === '/api/file/download') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       const filePath = url.searchParams.get('path') || '';
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!filePath) { jsonRes(res, 400, { ok: false, error: 'path 필수' }); return; }
@@ -2876,7 +2995,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/file/list — 사용자 documents 폴더 파일 목록
   if (req.method === 'GET' && url.pathname === '/api/file/list') {
     try {
-      const userNN = url.searchParams.get('userNN');
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const baseDir = `/opt/openclaw/shared/user${userNN}`;
       const subDir = url.searchParams.get('dir') || '';
@@ -2905,7 +3024,8 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/dooray/projects') {
     try {
-      const userNN = url.searchParams.get('userNN') || '01';
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let intData = {};
       try { intData = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
@@ -2930,7 +3050,8 @@ const server = http.createServer(async (req, res) => {
       const size = url.searchParams.get('size') || '20';
       const status = url.searchParams.get('status') || '';
       if (!projectId) { jsonRes(res, 400, { ok: false, error: 'projectId 필수' }); return; }
-      const userNN = url.searchParams.get('userNN') || '01';
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let intData = {};
       try { intData = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
@@ -2964,7 +3085,8 @@ const server = http.createServer(async (req, res) => {
       const projectId = url.searchParams.get('projectId');
       const taskId = url.searchParams.get('taskId');
       if (!projectId || !taskId) { jsonRes(res, 400, { ok: false, error: 'projectId, taskId 필수' }); return; }
-      const userNN = url.searchParams.get('userNN') || '01';
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let intData = {};
       try { intData = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
@@ -3000,7 +3122,8 @@ const server = http.createServer(async (req, res) => {
       const email = url.searchParams.get('email') || '';
       const name = url.searchParams.get('name') || '';
       if (!email && !name) { jsonRes(res, 400, { ok: false, error: 'email 또는 name 필수' }); return; }
-      const userNN = url.searchParams.get('userNN') || '01';
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       const intFile = path.join('/opt/openclaw/data', `user${userNN}`, 'integrations.json');
       let intData = {};
       try { intData = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}

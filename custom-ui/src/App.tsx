@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Network, Bot, Clock, HelpCircle, MessageSquare, LayoutDashboard, Link, Search, Pin, ExternalLink, Settings, Monitor } from 'lucide-react';
+import { Network, Bot, Clock, HelpCircle, MessageSquare, LayoutDashboard, Link, Search, Pin, ExternalLink, Settings, Monitor, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { LoginScreen } from './components/LoginScreen';
 import { Sidebar } from './components/Sidebar';
@@ -15,7 +15,11 @@ import { VNCPanel } from './components/VNCPanel';
 import { WorkflowView } from './components/WorkflowView';
 import { PendingMailBanner } from './components/PendingMailBanner';
 import { IntegrationsPage } from './components/IntegrationsPage';
-import type { Agent, Session } from './types';
+import { BriefHeader } from './components/BriefHeader';
+import { QuickActions } from './components/QuickActions';
+import { NotificationToast, type ToastItem } from './components/NotificationToast';
+import { CommandPalette } from './components/CommandPalette';
+import type { Agent, Session, Message } from './types';
 
 type ViewType = 'dashboard' | 'chat' | 'agents' | 'cron' | 'channels' | 'integrations' | 'workflow';
 
@@ -36,9 +40,9 @@ function Clock1Sec() {
 }
 
 /* ─── Dock icon definitions ─── */
+/* dashboard는 라우팅/컴포넌트는 보존하되 dock에서만 제거 — 자비스 컨셉에선 채팅 메인. */
 const dockItems: { key: ViewType; icon: string; label: string }[] = [
   { key: 'chat',         icon: '💬', label: '채팅' },
-  { key: 'dashboard',    icon: '📊', label: '대시보드' },
   { key: 'agents',       icon: '🤖', label: '에이전트' },
   { key: 'cron',         icon: '⏰', label: '예약 작업' },
   { key: 'workflow',     icon: '📋', label: '워크플로' },
@@ -90,9 +94,12 @@ function App() {
     try {
       const saved = localStorage.getItem(viewStorageKey);
       const valid: ViewType[] = ['dashboard', 'chat', 'agents', 'cron', 'channels', 'integrations', 'workflow'];
-      if (saved && valid.includes(saved as ViewType)) return saved as ViewType;
+      if (saved && valid.includes(saved as ViewType)) {
+        /* 옛 사용자가 dashboard 마지막 활성 뷰였으면 chat으로 redirect (dock에서 제거됨) */
+        return saved === 'dashboard' ? 'chat' : (saved as ViewType);
+      }
     } catch { /* ignore */ }
-    return 'dashboard';
+    return 'chat';
   });
   const setCurrentView = useCallback((v: ViewType) => {
     _setCurrentView(v);
@@ -165,6 +172,109 @@ function App() {
     currentSession, createSession, switchSession, clearSession, loadSessionHistory,
     deleteSession, stopChat, isLoading, apiCallCount, sendRequest, fetchAgents,
   } = useWebSocket({ url: token ? getGatewayUrl(token) : '', token });
+
+  /* ───── Jarvis additions: QuickActions prefill + push toasts ───── */
+  const [injectMessage, setInjectMessage] = useState<{ value: string; nonce: number } | null>(null);
+  const injectPrefill = useCallback((text: string) => {
+    setInjectMessage({ value: text, nonce: Date.now() + Math.floor(Math.random() * 1000) });
+  }, []);
+
+  /* 퀵 액션 패널 토글 (대화 중일 때만 의미. 빈 화면은 카드형으로 항상 노출) */
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+
+  /* 통합 검색 팔레트 (Cmd+K / Ctrl+K) */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  /* 사이드바 collapse 토글 — 고정 폭(256px) 열고 닫기. localStorage 저장. Cmd+B 단축키. */
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem('tideclaw-sidebar-open');
+      if (v === '0') return false;
+    } catch { /* ignore */ }
+    return true;
+  });
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen(v => {
+      const next = !v;
+      try { localStorage.setItem('tideclaw-sidebar-open', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleSidebar]);
+
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const pushToast = useCallback((t: Omit<ToastItem, 'id' | 'ts'>) => {
+    setToasts(prev => [
+      ...prev,
+      { ...t, id: `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ts: Date.now() },
+    ]);
+  }, []);
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  /* Cmd+K / Ctrl+K 글로벌 단축키 — 통합 검색 팔레트 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /* 멘션된 응답 도착 → 토스트.
+     history reload(새로고침/세션 전환)로 옛 mention이 신규처럼 보이는 걸 방지 — 마운트 시간 기준 옛 메시지 + 세션 전환 시 ref reset. */
+  const lastSeenMentionRespRef = useRef<string>('');
+  const mountedAtRef = useRef<number>(Date.now());
+  /* 세션 전환 시 ref 리셋 — 새 세션의 옛 mention 무시 */
+  useEffect(() => {
+    lastSeenMentionRespRef.current = '';
+    mountedAtRef.current = Date.now();
+  }, [currentSession]);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const recentMentions = (messages as Message[])
+      .filter(m => m.role === 'assistant' && !m.isLoading && m.mentionAgentId && m.content.trim().length > 0);
+    const last = recentMentions[recentMentions.length - 1];
+    if (!last) return;
+    if (last.id === lastSeenMentionRespRef.current) return;
+
+    /* 첫 트리거(history reload) — ref만 갱신하고 토스트 skip */
+    if (lastSeenMentionRespRef.current === '') {
+      lastSeenMentionRespRef.current = last.id;
+      return;
+    }
+
+    /* 마운트 시점보다 3초 이상 전 메시지는 옛것으로 간주 — 토스트 skip */
+    const ts = last.timestamp instanceof Date ? last.timestamp.getTime() : 0;
+    if (ts && ts < mountedAtRef.current - 3000) {
+      lastSeenMentionRespRef.current = last.id;
+      return;
+    }
+
+    lastSeenMentionRespRef.current = last.id;
+    const ag = agents.find(a => a.id === last.mentionAgentId);
+    if (!ag) return;
+    pushToast({
+      kind: 'delegation',
+      title: `${ag.emoji || '🤖'} ${ag.name} 응답 도착`,
+      body: last.content.slice(0, 140).replace(/\n+/g, ' '),
+    });
+  }, [messages, agents, pushToast]);
+  /* ──────────────────────────────────────────────────────────────── */
 
   // 에이전트 로드되면 저장된 selectedAgent.id 복원
   useEffect(() => {
@@ -365,6 +475,19 @@ function App() {
 
         {/* ─── LEFT DOCK (icon strip) ─── */}
         <nav className="w-16 flex flex-col items-center py-3 gap-1 bg-card/50 border-r border-border-color flex-shrink-0">
+          {/* 사이드바 토글 — dock 맨 위 (Ctrl+B) */}
+          <button
+            onClick={toggleSidebar}
+            className="w-11 h-11 mb-1 rounded-xl flex items-center justify-center text-text-secondary hover:bg-accent/10 hover:text-accent transition-all relative group border-b border-border-color/40"
+            title={`사이드바 ${sidebarOpen ? '닫기' : '열기'} (Ctrl+B)`}
+          >
+            {sidebarOpen
+              ? <PanelLeftClose className="w-5 h-5" strokeWidth={2} />
+              : <PanelLeftOpen className="w-5 h-5" strokeWidth={2} />}
+            <span className="absolute left-full ml-2 px-2 py-1 bg-card border border-border-color text-text-primary text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-sm">
+              {sidebarOpen ? '사이드바 닫기' : '사이드바 열기'} · Ctrl+B
+            </span>
+          </button>
           {dockItems.map((item) => (
             <button
               key={item.key}
@@ -418,18 +541,24 @@ function App() {
           </button>
         </nav>
 
-        {/* ─── SIDEBAR (agent list + sessions) ─── */}
-        <aside className="w-64 flex-shrink-0 flex flex-col bg-card/30 border-r border-border-color overflow-hidden">
-          <Sidebar
-            agents={agents}
-            sessions={sessions}
-            currentSession={currentSession}
-            onSelectAgent={handleSelectAgent}
-            onSelectSession={handleSelectSession}
-            onCreateSession={handleCreateSession}
-            onDeleteSession={deleteSession}
-            currentAgentId={currentAgentData?.id}
-          />
+        {/* ─── SIDEBAR (agent list + sessions) — 토글 열고 닫기 (256px / 0) ─── */}
+        <aside
+          className={`flex-shrink-0 flex flex-col bg-card/30 border-r border-border-color overflow-hidden transition-[width] duration-200 ${
+            sidebarOpen ? 'w-64 border-r' : 'w-0 border-r-0'
+          }`}
+        >
+          {sidebarOpen && (
+            <Sidebar
+              agents={agents}
+              sessions={sessions}
+              currentSession={currentSession}
+              onSelectAgent={handleSelectAgent}
+              onSelectSession={handleSelectSession}
+              onCreateSession={handleCreateSession}
+              onDeleteSession={deleteSession}
+              currentAgentId={currentAgentData?.id}
+            />
+          )}
         </aside>
 
         {/* ─── MAIN CONTENT ─── */}
@@ -438,25 +567,46 @@ function App() {
           {/* 메일 발송 대기 배너 — 모든 뷰에 노출 */}
           <PendingMailBanner token={token} />
 
-          {/* Chat header — only in chat view */}
+          {/* Chat header — agent 정보 + 오늘 컨텍스트(Brief) 한 줄 통합 */}
           {currentView === 'chat' && currentAgentData && (
-            <div className="px-6 py-3 flex items-center justify-between border-b border-border-color bg-card/60 flex-shrink-0">
-              <div className="flex items-center gap-3">
+            <div className="px-6 py-2.5 flex items-center gap-4 border-b border-border-color bg-card/60 flex-shrink-0 min-w-0">
+              {/* 왼쪽: agent 정보 */}
+              <div className="flex items-center gap-2.5 flex-shrink-0">
                 <span className="text-lg">{currentAgentData.emoji || '🤖'}</span>
-                <span className="font-bold text-text-primary text-lg">{currentAgentData.name}</span>
-                <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent/10 text-accent border border-accent/15">
+                <span className="font-bold text-text-primary text-base">{currentAgentData.name}</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/15">
                   {currentAgentData.model || 'AI'}
                 </span>
               </div>
-              <div className="flex gap-1.5">
-                <button className="w-8 h-8 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all" title="검색">
-                  <Search className="w-4 h-4" />
+
+              {/* 가운데: Brief 정보 (embedded — 자체 padding/border 없음) */}
+              <div className="flex-1 min-w-0 overflow-hidden">
+                <BriefHeader
+                  embedded
+                  agents={agents}
+                  messages={messages as Message[]}
+                  sendRequest={sendRequest}
+                  slot={slotForKey}
+                  onCreateAgent={() => setCurrentView('agents')}
+                  onQuickPrompt={(text) => { if (currentSession) sendMessage(text); else injectPrefill(text); }}
+                />
+              </div>
+
+              {/* 오른쪽: 액션 버튼들 */}
+              <div className="flex gap-1 flex-shrink-0">
+                <button
+                  onClick={() => setPaletteOpen(true)}
+                  className="h-7 px-2 rounded-lg border border-border-color bg-card flex items-center gap-1 text-text-secondary hover:text-accent hover:border-accent/20 transition-all"
+                  title="통합 검색 (에이전트 · 세션 · 메시지 · 페이지)"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <kbd className="text-[9px] font-mono opacity-60">⌘K</kbd>
                 </button>
-                <button className="w-8 h-8 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all" title="고정">
-                  <Pin className="w-4 h-4" />
+                <button className="w-7 h-7 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all" title="고정 (예정)">
+                  <Pin className="w-3.5 h-3.5" />
                 </button>
-                <button className="w-8 h-8 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all" title="내보내기">
-                  <ExternalLink className="w-4 h-4" />
+                <button className="w-7 h-7 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all" title="내보내기 (예정)">
+                  <ExternalLink className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
@@ -474,13 +624,50 @@ function App() {
               {currentSession ? (
                 <MessageList messages={messages} agents={agents} />
               ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 text-text-secondary">
+                <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 text-text-secondary overflow-y-auto">
                   <div className="text-5xl mb-4">{currentAgentData?.emoji || '💬'}</div>
                   <h2 className="text-xl font-semibold text-text-primary mb-2">{currentAgentData?.name || '에이전트'}</h2>
                   <p className="text-sm">메시지를 입력하면 새 대화가 시작됩니다.</p>
+                  {/* 빈 화면 시작 가이드: 퀵 액션 카드형 */}
+                  <QuickActions
+                    variant="card"
+                    agents={agents}
+                    currentAgentId={currentAgentData?.id}
+                    onQuickPrompt={injectPrefill}
+                    onPrefillMention={injectPrefill}
+                    onCreateAgent={() => setCurrentView('agents')}
+                  />
                 </div>
               )}
-              <ChatInput onSendMessage={sendMessage} onStop={stopChat} disabled={!connectionStatus.connected} isLoading={isLoading} agentName={currentAgentData?.name} model={currentAgentData?.model} agents={agents} currentAgentId={currentAgentData?.id} />
+              {/* ⚡ 토글로 inline 칩 펼침 — 빈 채팅이든 대화 중이든 동일 */}
+              {quickActionsOpen && (
+                <QuickActions
+                  variant="inline"
+                  agents={agents}
+                  currentAgentId={currentAgentData?.id}
+                  onQuickPrompt={(text) => {
+                    if (currentSession) sendMessage(text);
+                    else injectPrefill(text);
+                    setQuickActionsOpen(false);
+                  }}
+                  onPrefillMention={injectPrefill}
+                  onCreateAgent={() => setCurrentView('agents')}
+                  onAfterPick={() => setQuickActionsOpen(false)}
+                />
+              )}
+              <ChatInput
+                onSendMessage={sendMessage}
+                onStop={stopChat}
+                disabled={!connectionStatus.connected}
+                isLoading={isLoading}
+                agentName={currentAgentData?.name}
+                model={currentAgentData?.model}
+                agents={agents}
+                currentAgentId={currentAgentData?.id}
+                injectMessage={injectMessage}
+                quickActionsOpen={quickActionsOpen}
+                onToggleQuickActions={() => setQuickActionsOpen(v => !v)}
+              />
             </>
           ) : currentView === 'agents' ? (
             <AgentManager sendRequest={sendRequest} onAgentsChanged={fetchAgents} token={token} />
@@ -518,6 +705,21 @@ function App() {
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       {showVNC && <VNCPanel token={token} onClose={() => setShowVNC(false)} />}
+
+      {/* 통합 검색 팔레트 — Cmd+K */}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        agents={agents}
+        sessions={sessions}
+        messages={messages as Message[]}
+        onSelectAgent={(a) => { handleSelectAgent(a); }}
+        onSelectSession={(sk) => { switchSession(sk); setCurrentView('chat'); }}
+        onNavigate={(v) => setCurrentView(v)}
+      />
+
+      {/* 자비스 푸시 토스트 — 우상단 고정 */}
+      <NotificationToast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ConnectionStatus, Agent, Session, ProtocolFrame } from '../types';
+import { shouldHideMessage } from '../utils/messageFilter';
 
 interface UseWebSocketProps {
   url: string;
@@ -896,39 +897,17 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
               timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
             };
           }).filter(m => {
+            // history 추가 정리: 서브에이전트/runtime 메타 노이즈는 user/assistant 무관 hide
             const c = m.content.trim();
-            // 내부 메시지 숨기기 — role 관계없이 먼저 체크
-            if (c.includes('OpenClaw runtime context')) return false;
-            if (c.includes('BEGIN_UNTRUSTED_CHILD_RESULT')) return false;
-            if (c.includes('END_UNTRUSTED_CHILD_RESULT')) return false;
-            if (c.includes('[Internal task completion event]')) return false;
-            if (c.includes('runtime-generated, not user-authored')) return false;
             if (c.includes('<<<')) return false;
-            if (c.includes('Sender (untrusted metadata)')) return false;
             if (c.includes('subagent task')) return false;
             if (c.includes('session_key: agent:')) return false;
             if (c.includes('Action:') && c.includes('subagent')) return false;
             if (c.includes('Stats: runtime') && c.includes('tokens')) return false;
-            // user role은 내부 메시지 아니면 항상 표시
-            if (m.role === 'user') return true;
-            if (c.includes('---\nname:')) return false;
-            if (c.includes('Weather report')) return false;
-            // JSON raw 응답
-            if (c.startsWith('{') && (c.includes('"ok"') || c.includes('"status"') || c.includes('"error"') || c.includes('"account"') || c.includes('"events"') || c.includes('"files"') || c.includes('"drives"') || c.includes('"messages"') || c.includes('"content"') || c.includes('"results"') || c.includes('"provider"') || c.includes('"score"'))) return false;
-            // memory/tool 내부 출력
-            if (c.includes('Successfully wrote') && c.includes('bytes to')) return false;
-            if (c.includes('Source: memory/')) return false;
-            if (c.includes('"citation"') && c.includes('"snippet"')) return false;
-            // exec 도구 내부 출력
-            if (c.startsWith('(') && c.endsWith(')') && (c.includes('Command exited') || c.includes('no output') || c.includes('Command still running'))) return false;
-            if (c.includes('Command still running') && c.includes('pid')) return false;
-            // 쉘 명령어 출력 (tc-user, ls 출력, 파일 목록 등)
-            if (/^tc-user\d+$/.test(c)) return false;
-            if (/^total \d+/m.test(c) && /[d-]rwx/m.test(c)) return false;
             if (/^[d-]rwx/.test(c)) return false;
-            // 빈 메시지
-            if (c.length < 2) return false;
-            return true;
+            if (c.includes('Command still running') && c.includes('pid')) return false;
+            // 공통 필터 통과
+            return !shouldHideMessage(m.role, m.content);
           });
           // localStorage 멘션 로그 병합 (타임스탬프 순)
           const mentionLog = readMentionLog(sessionKey);

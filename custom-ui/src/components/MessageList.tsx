@@ -3,8 +3,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeRaw from 'rehype-raw';
-import { User, Bot, Loader2, Copy, Download, Check } from 'lucide-react';
+import { User, Bot, Loader2, Copy, Download, Check, CheckCircle2 } from 'lucide-react';
 import type { Message, Agent } from '../types';
+import { shouldHideMessage, cleanDisplayContent } from '../utils/messageFilter';
 
 /* 사용자 메시지에서 [파일: xxx] 라벨 다음의 inline 텍스트를 라벨만 남기고 제거 */
 function trimFileContent(content: string): string {
@@ -146,57 +147,21 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
           <p className="text-sm mt-2 opacity-60">메시지를 입력하여 대화를 시작하세요</p>
         </div>
       ) : (
-        messages.filter(m => {
-          // role과 무관하게 툴 원시 덤프 전역 필터 (새로 추가)
-          {
-            const t = (m.content || '').trim();
-            if (t.startsWith('{')) {
-              if (t.includes('"cdpPort"') || t.includes('"cdpReady"') || t.includes('"userDataDir"')) return false;
-              if (t.includes('"targetId"') && t.includes('"url"')) return false;
-              if (t.includes('"navigation"') && t.includes('"ttfb"')) return false;
-              if (t.includes('"loadComplete"') || t.includes('"paint"') && t.includes('"fp"')) return false;
-              if (t.includes('"ok":true') && t.includes('"messageId"')) return false;
-              if (t.includes('"byType"') || t.includes('"resource_count"') || t.includes('"totalRequests"')) return false;
-              // 200자 이상 JSON인데 한글 없음 → 툴 결과일 가능성 큼
-              if (/^\{[\s\S]*\}$/.test(t) && t.length > 200 && !/[가-힣]/.test(t)) return false;
-            }
-          }
-          if (m.role === 'system') {
-            const c = m.content;
-            if (c.includes('작업 중...') || c.includes('완료')) return true;
-            if (c.includes('---\nname:') || c.includes('```bash') || c.includes('Weather report') || c.includes('curl ') || c.startsWith('{') || c.includes('OpenClaw runtime') || c.includes('BEGIN_UNTRUSTED') || c.includes('runtime-generated') || c.includes('[Internal task') || c.includes('Sender (untrusted')) return false;
-          }
-          if (m.content.includes('===SOUL.md===') || m.content.includes('===IDENTITY.md===') || m.content.includes('===EMOJI===') || m.content.includes('HEARTBEAT.md') || m.content.includes('===AGENTS.md===')) return false;
-          if (/^HEARTBEAT(_[A-Z]+)?\b/i.test(m.content.trim())) return false;
-          // BOOTSTRAP.md 본문이 그대로 응답으로 나온 경우 hide (kimi-k2.6 등 reasoning 모델이 룰 무시 시 발생)
-          {
-            const ct = (m.content || '').trim();
-            if (/^#\s*시스템 규칙/i.test(ct)) return false;
-            if (ct.includes('절대 위반 금지') && (ct.includes('memory_search') || ct.includes('BOOTSTRAP.md'))) return false;
-            if (/^##\s*메모리\s*\(이전 대화/.test(ct)) return false;
-          }
-          if (m.role === 'assistant') {
-            const t = m.content.trim();
-            if (t.startsWith('{') && t.includes('"status"') && t.includes('"accepted"')) return false;
-            if (t.startsWith('{') && (t.includes('"results"') || t.includes('"provider"') || t.includes('"score"'))) return false;
-            if (t.includes('"childSessionKey"') && t.includes('"status": "accepted"')) return false;
-            if (t.includes('"modelApplied"') && t.includes('"runId"')) return false;
-            if (t.includes('Successfully wrote') && t.includes('bytes to')) return false;
-            if (t === 'Source: memory/' || /^Source: memory\//.test(t)) return false;
-            // browser 도구 상태 덤프
-            if (t.startsWith('{') && (t.includes('"cdpPort"') || t.includes('"cdpReady"') || t.includes('"userDataDir"'))) return false;
-            // browser 페이지 이동 결과 (targetId + url 덩어리)
-            if (t.startsWith('{') && t.includes('"targetId"') && t.includes('"url"')) return false;
-            // Performance API 원시 결과
-            if (t.startsWith('{') && (t.includes('"navigation"') && t.includes('"ttfb"') || t.includes('"loadComplete"') || t.includes('"paint"'))) return false;
-            // gcurl/API 원시 응답
-            if (t.startsWith('{') && t.includes('"ok":true') && t.includes('"messageId"')) return false;
-            // 일반적 JSON 툴 결과 (key가 많고 본문에 설명 없음)
-            if (/^\{[\s\S]*\}$/.test(t) && t.length > 200 && !/[가-힣]/.test(t)) return false;
-          }
-          if (m.role === 'assistant' && !m.isLoading && m.content.trim().length < 2) return false;
-          return true;
-        }).map((message) => {
+        (() => {
+          const filtered = messages.filter(m => {
+            // 로딩 중 비어있는 assistant는 통과시켜 "응답을 작성하고 있습니다" 표시
+            if (m.role === 'assistant' && m.isLoading && (!m.content || m.content.trim().length === 0)) return true;
+            // working/working- system + toolCalls 있는 system은 통과 (별도 렌더)
+            if (m.role === 'system' && (m.id.startsWith('working-') || (m.toolCalls && m.toolCalls.length > 0))) return true;
+            return !shouldHideMessage(m.role, m.content || '');
+          });
+          /* 마지막 user 메시지 이후 assistant 응답이 아직 없는지 — "비서 생각 중" 카드 결정용 */
+          const lastIdx = filtered.length - 1;
+          const lastMsg = filtered[lastIdx];
+          const showAssistantThinking =
+            lastMsg && lastMsg.role === 'user' && !lastMsg.isLoading;
+          return [
+            ...filtered.map((message, idx) => {
           const isUser = message.role === 'user';
           const isSystem = message.role === 'system';
 
@@ -224,30 +189,47 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
             );
           }
 
-          // Delegation badge — 위임 표시 (데모처럼)
+          // Delegation badge — 위임 표시 + 응답 도착 여부에 따라 spinner/완료 표시
           if (isSystem) {
+            /* 위임 system 다음에 isMention assistant 응답이 도착했는지 확인 */
+            const pending = !filtered.slice(idx + 1).some(m =>
+              m.role === 'assistant' && !!m.mentionAgentId && (m.content || '').trim().length > 0
+            );
             return (
               <div key={message.id} className="flex justify-center my-3">
-                <div className="inline-flex items-center gap-3 px-5 py-2.5 rounded-full text-sm font-medium bg-amber-500/[0.06] border border-amber-500/20 text-amber-700">
-                  <span>{message.content}</span>
+                <div className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-full text-sm font-medium border ${
+                  pending
+                    ? 'bg-amber-500/[0.08] border-amber-500/30 text-amber-800'
+                    : 'bg-emerald-500/[0.06] border-emerald-500/25 text-emerald-700'
+                }`}>
+                  {pending ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-amber-600" strokeWidth={2.5} />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" strokeWidth={2.5} />
+                  )}
+                  <span className="truncate max-w-[60ch]">{message.content}</span>
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
+                    pending ? 'bg-amber-500/20 text-amber-900' : 'bg-emerald-500/15 text-emerald-800'
+                  }`}>
+                    {pending ? (
+                      <><ElapsedTimer startTime={message.timestamp} /> · 응답 대기</>
+                    ) : (
+                      <>완료</>
+                    )}
+                  </span>
                 </div>
               </div>
             );
           }
 
-          const cleanContent = (message.content || (message.isLoading ? '생각 중...' : ''))
-            .replace(/```json\s*\{\s*"status"\s*:\s*"accepted"[\s\S]*?"modelApplied":\s*true\s*\}\s*```/g, '')
-            .replace(/\{\s*"status"\s*:\s*"accepted"[\s\S]*?"modelApplied":\s*true\s*\}/g, '')
-            .replace(/\n?Source: memory\/[^\n]*/g, '')
-            .replace(/\n?Successfully wrote \d+ bytes to [^\n]*/g, '')
-            .trim() || (message.isLoading ? '생각 중...' : '');
+          const cleanContent = cleanDisplayContent(message.content || '') || (message.isLoading ? '생각 중...' : '');
 
           const mentionAgent = message.mentionAgentId ? agents.find(a => a.id === message.mentionAgentId) : undefined;
           const isMention = !!message.mentionAgentId;
           const mentionLabel = mentionAgent ? `${mentionAgent.emoji || '🤖'} ${mentionAgent.name}` : message.mentionAgentId;
 
           return (
-            <div key={message.id}>
+            <div key={message.id} data-message-id={message.id} className="scroll-mt-20">
               <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
                 {/* Avatar */}
                 <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${
@@ -344,8 +326,39 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
               </div>
             </div>
           );
-        })
+            }),
+            /* 사용자 마지막 발화 이후 응답 미도착 → "비서 생각 중" 인라인 카드 */
+            showAssistantThinking && (
+              <ThinkingCard key="thinking-card" startTime={lastMsg!.timestamp} />
+            ),
+          ];
+        })()
       )}
+    </div>
+  );
+}
+
+function ThinkingCard({ startTime }: { startTime: Date }) {
+  return (
+    <div className="flex gap-3">
+      <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center bg-card border border-border-color shadow-sm">
+        <Bot className="w-5 h-5 text-accent" />
+      </div>
+      <div className="flex-1">
+        <div className="inline-block rounded-2xl bg-white border border-black/[0.05] px-4 py-2.5 rounded-tl-md shadow-sm">
+          <div className="flex items-center gap-2.5 text-text-secondary">
+            <div className="flex gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/50 animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/50 animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/50 animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+            <span className="text-xs font-medium">비서가 생각 중입니다</span>
+            <span className="text-[10px] font-mono text-text-secondary/60">
+              <ElapsedTimer startTime={startTime} />
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

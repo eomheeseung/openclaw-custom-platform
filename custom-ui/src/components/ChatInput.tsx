@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Send, Square, Paperclip, X, FileText, Image as ImageIcon } from 'lucide-react';
+import { Send, Square, Paperclip, X, FileText, Image as ImageIcon, Zap } from 'lucide-react';
 import type { Agent } from '../types';
 
 interface ChatInputProps {
@@ -11,9 +11,16 @@ interface ChatInputProps {
   model?: string;
   agents?: Agent[];
   currentAgentId?: string;
+  /* QuickActions에서 prefill 주입.
+     nonce가 바뀔 때마다 message state에 value를 강제 set하고 focus.
+     기존 입력 보호 위해 사용자가 무언가 작성 중이면 prepend로 동작. */
+  injectMessage?: { value: string; nonce: number } | null;
+  /* ⚡ 퀵 액션 토글 (있을 때만 버튼 표시) */
+  quickActionsOpen?: boolean;
+  onToggleQuickActions?: () => void;
 }
 
-export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentName, model, agents = [], currentAgentId }: ChatInputProps) {
+export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentName, model, agents = [], currentAgentId, injectMessage, quickActionsOpen, onToggleQuickActions }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -42,6 +49,29 @@ export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentNam
   useEffect(() => {
     if (mentionIndex >= filteredAgents.length) setMentionIndex(0);
   }, [filteredAgents, mentionIndex]);
+
+  /* QuickActions에서 chip 클릭 시 prefill 주입 — nonce 바뀔 때만 동작 */
+  const lastInjectNonceRef = useRef<number>(0);
+  useEffect(() => {
+    if (!injectMessage) return;
+    if (injectMessage.nonce === lastInjectNonceRef.current) return;
+    lastInjectNonceRef.current = injectMessage.nonce;
+    setMessage(prev => {
+      const t = prev.trim();
+      if (!t) return injectMessage.value;
+      // 사용자가 작성 중이면 prepend (위임 prefix 등)
+      return `${injectMessage.value}${prev}`;
+    });
+    // textarea에 focus + 끝으로 caret 이동
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        const len = ta.value.length;
+        ta.setSelectionRange(len, len);
+      }
+    }, 0);
+  }, [injectMessage]);
 
   // 키보드 네비 시 선택 항목을 스크롤 뷰로 이동
   useEffect(() => {
@@ -274,6 +304,21 @@ export function ChatInput({ onSendMessage, onStop, disabled, isLoading, agentNam
 
         {/* Tool buttons */}
         <div className="flex gap-0.5 flex-shrink-0 pb-0.5">
+          {onToggleQuickActions && (
+            <button
+              type="button"
+              onClick={onToggleQuickActions}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                quickActionsOpen
+                  ? 'bg-accent/10 text-accent'
+                  : 'text-text-secondary/60 hover:text-accent hover:bg-accent/5'
+              }`}
+              disabled={isInputBlocked}
+              title="퀵 액션 (오늘 명령 / 위임)"
+            >
+              <Zap className="w-4 h-4" strokeWidth={2.5} />
+            </button>
+          )}
           <button
             onClick={() => fileInputRef.current?.click()}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-text-secondary/60 hover:text-accent hover:bg-accent/5 transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
