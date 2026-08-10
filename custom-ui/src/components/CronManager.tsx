@@ -5,6 +5,7 @@ import type { ProtocolFrame, Agent } from '../types';
 interface CronManagerProps {
   sendRequest: (method: string, params?: Record<string, unknown>) => Promise<ProtocolFrame>;
   agents: Agent[];
+  connected?: boolean;
 }
 
 interface CronJob {
@@ -430,7 +431,7 @@ function SchedulePicker({ value, onChange }: { value: string; onChange: (cron: s
   );
 }
 
-export function CronManager({ sendRequest, agents }: CronManagerProps) {
+export function CronManager({ sendRequest, agents, connected = true }: CronManagerProps) {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [runs, setRuns] = useState<CronRun[]>([]);
   const [loading, setLoading] = useState(true);
@@ -512,7 +513,11 @@ export function CronManager({ sendRequest, agents }: CronManagerProps) {
     }
   }, [sendRequest]);
 
-  useEffect(() => { loadJobs(); }, [loadJobs]);
+  /* WebSocket 연결 후에만 로드 */
+  useEffect(() => {
+    if (!connected) return;
+    loadJobs();
+  }, [loadJobs, connected]);
 
   const handleCreate = async () => {
     if (!newName.trim() || !newSchedule.trim() || !newText.trim()) {

@@ -11,6 +11,8 @@ interface UseWebSocketReturn {
   connectionStatus: ConnectionStatus;
   messages: Message[];
   sendMessage: (content: string) => void;
+  /** 프론트가 직접 assistant 메시지를 화면에 삽입 (LLM 우회 · 서버 저장 안 됨) */
+  injectAssistantMessage: (content: string) => void;
   agents: Agent[];
   sessions: Session[];
   currentSession: string | null;
@@ -701,6 +703,26 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     });
   };
 
+  /* 프론트에서 assistant 메시지를 직접 채팅에 삽입 (LLM 우회).
+     세션 없으면 새로 만들고 활성화. QuickActions "지난 주 보고서" 같은 결정론적 응답에 사용. */
+  const injectAssistantMessage = useCallback((content: string) => {
+    let activeSessionKey = currentSession;
+    if (!activeSessionKey) {
+      const fallbackAgentId = (typeof window !== 'undefined' ? window.location.pathname.match(/^\/chat\/([^/]+)/)?.[1] : null) || null;
+      if (fallbackAgentId) {
+        activeSessionKey = `agent:${fallbackAgentId}:${generateId().slice(0, 8)}`;
+        setCurrentSession(activeSessionKey);
+      }
+    }
+    const assistantMsg: Message = {
+      id: `msg-${++messageIdCounter.current}`,
+      role: 'assistant',
+      content,
+      timestamp: new Date(),
+    };
+    setMessages(prev => [...prev.filter(m => !m.id.startsWith('working-')), assistantMsg]);
+  }, [currentSession]);
+
   // Send chat message
   const sendMessage = useCallback(async (content: string, attachments?: File[]) => {
     // @멘션 파싱: 메시지 맨 앞 @<agentId> 감지
@@ -986,6 +1008,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     connectionStatus,
     messages,
     sendMessage,
+    injectAssistantMessage,
     agents,
     sessions,
     currentSession,

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Sparkles, Calendar, Mail, ListTodo, AtSign, Plus } from 'lucide-react';
+import { Sparkles, Calendar, Mail, ListTodo, AtSign, Plus, FileText, History, CalendarDays } from 'lucide-react';
 import type { Agent } from '../types';
 
 interface QuickActionsProps {
@@ -7,6 +7,7 @@ interface QuickActionsProps {
   currentAgentId?: string;
   onQuickPrompt: (text: string) => void;       // 즉시 보내기
   onPrefillMention: (text: string) => void;    // 입력란 prefill (사용자가 이어 작성)
+  onInjectAssistant?: (content: string) => void; // 프론트가 직접 assistant 메시지 삽입 (LLM 우회)
   onCreateAgent?: () => void;
   onAfterPick?: () => void;                    // 칩 클릭 후 자동 닫힘 콜백
   variant?: 'inline' | 'card';                 // inline=ChatInput 위 펼침, card=빈 화면 시작 가이드
@@ -18,9 +19,41 @@ interface Chip {
   prompt: string;
   send: boolean; // true=즉시 보내기, false=입력란 prefill
   tone?: 'accent' | 'mention' | 'soft';
+  /* 카드/툴팁에 표시할 안내 문구. 없으면 prompt 를 그대로 사용. */
+  hint?: string;
+  /* 커스텀 클릭 핸들러. 값이 있으면 prompt·send 무시하고 이것만 실행. */
+  onClickCustom?: (ctx: { injectAssistant?: (content: string) => void; onQuickPrompt: (text: string) => void }) => Promise<void> | void;
 }
 
-/* 기본 자비스 명령 칩 — 즉시 보내기 */
+/* "지난 주 보고서" — 무조건 biz-picker 카드 표시 (default 있어도) · 선택 후 프론트가 API 호출 */
+async function lastWeekReportClick(ctx: { injectAssistant?: (content: string) => void; onQuickPrompt: (text: string) => void }): Promise<void> {
+  try {
+    const tokenMatch = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') || '' : '').match(/user(\d+)/i);
+    const userNN = tokenMatch ? tokenMatch[1].padStart(2, '0') : '';
+    const qs = userNN ? `?userNN=${userNN}` : '';
+    /* 사업 목록 조회 */
+    const resp = await fetch(`/api/business-report/projects${qs}`, { credentials: 'include' });
+    const data = await resp.json();
+    if (!data.ok || !Array.isArray(data.projects) || data.projects.length === 0) {
+      ctx.injectAssistant?.('등록된 사업이 없어요. 먼저 외부 연동 · 사업 주간보고에서 사업을 등록해주세요.');
+      return;
+    }
+    /* biz-picker 카드 삽입 (intent: last-week-file) · 선택 시 클라이언트가 API 호출 */
+    const card = {
+      prompt: '어느 사업의 지난 주 보고서를 볼까요?',
+      intent: 'last-week-file',
+      projects: data.projects.map((p: { id: string; name: string; org?: string; archived?: boolean }) => ({
+        id: p.id, name: p.name, org: p.org, archived: p.archived,
+      })),
+    };
+    ctx.injectAssistant?.('```biz-picker\n' + JSON.stringify(card) + '\n```');
+  } catch (err) {
+    console.error('[QuickActions] projects fetch error', err);
+    ctx.injectAssistant?.('사업 목록 조회 중 오류가 발생했어요.');
+  }
+}
+
+/* 기본 명령 칩 (비서/일반) — 즉시 보내기 */
 const DEFAULT_CHIPS: Chip[] = [
   { label: '오늘 뭐해?', icon: Sparkles, prompt: '오늘 일정·미팅·미답 메일·마감 task 정리해줘. 짧고 우선순위 순으로.', send: true, tone: 'accent' },
   { label: '다음 미팅', icon: Calendar, prompt: '다음 미팅이 언제 몇 시고 누구랑인지, 준비할 자료/회의록 있으면 같이 알려줘.', send: true, tone: 'soft' },
@@ -28,21 +61,42 @@ const DEFAULT_CHIPS: Chip[] = [
   { label: '내 task', icon: ListTodo, prompt: '내가 담당하고 working 상태인 두레이 task 마감 임박 순으로 정리.', send: true, tone: 'soft' },
 ];
 
+/* 에이전트별 커스텀 칩. 매칭되면 DEFAULT_CHIPS 대신 이걸 사용. */
+const AGENT_CHIPS: Record<string, Chip[]> = {
+  'business-report': [
+    { label: '이번 주 초안', icon: FileText, prompt: '이번 주 사업 주간보고 초안 만들어줘.', send: true, tone: 'accent' },
+    { label: '주차 지정', icon: CalendarDays, prompt: '주차 지정: ', send: false, tone: 'soft', hint: '예: 7/13~7/17 · 7월 2주차' },
+    { label: '지난 주 보고서', icon: History, prompt: '', send: true, tone: 'soft', hint: '지난주 생성한 파일 즉시 다운로드', onClickCustom: lastWeekReportClick },
+  ],
+};
+
 export function QuickActions({
   agents,
   currentAgentId,
   onQuickPrompt,
   onPrefillMention,
+  onInjectAssistant,
   onCreateAgent,
   onAfterPick,
   variant = 'inline',
 }: QuickActionsProps) {
+  /* 에이전트별 칩 선택. 매칭되면 커스텀, 아니면 DEFAULT. */
+  const chips = useMemo(() => {
+    if (currentAgentId && AGENT_CHIPS[currentAgentId]) return AGENT_CHIPS[currentAgentId];
+    return DEFAULT_CHIPS;
+  }, [currentAgentId]);
+
   /* 멘션 가능한 에이전트 (현재 에이전트 제외 + discord 변형 제외) */
   const mentionable = useMemo(() => {
     return agents.filter(a => a.id !== currentAgentId && !a.id.endsWith('-discord'));
   }, [agents, currentAgentId]);
 
-  const handleChip = (chip: Chip) => {
+  const handleChip = async (chip: Chip) => {
+    if (chip.onClickCustom) {
+      await chip.onClickCustom({ injectAssistant: onInjectAssistant, onQuickPrompt });
+      onAfterPick?.();
+      return;
+    }
     if (chip.send) onQuickPrompt(chip.prompt);
     else onPrefillMention(chip.prompt);
     onAfterPick?.();
@@ -61,7 +115,7 @@ export function QuickActions({
           빠른 명령
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {DEFAULT_CHIPS.map(chip => {
+          {chips.map(chip => {
             const Icon = chip.icon;
             return (
               <button
@@ -72,7 +126,7 @@ export function QuickActions({
                 <Icon className="w-4 h-4 text-accent flex-shrink-0" strokeWidth={2.5} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-text-primary">{chip.label}</div>
-                  <div className="text-[11px] text-text-secondary line-clamp-1">{chip.prompt}</div>
+                  <div className="text-[11px] text-text-secondary line-clamp-2 leading-snug">{chip.hint || chip.prompt}</div>
                 </div>
               </button>
             );
@@ -116,7 +170,7 @@ export function QuickActions({
   /* inline variant: ChatInput 위 펼쳐지는 1줄 (토글로 노출) */
   return (
     <div className="px-6 pt-2 pb-1 flex items-center gap-1.5 flex-wrap text-xs flex-shrink-0 animate-in slide-in-from-bottom-2 duration-200">
-      {DEFAULT_CHIPS.map(chip => {
+      {chips.map(chip => {
         const Icon = chip.icon;
         const toneCls =
           chip.tone === 'accent'
@@ -129,7 +183,7 @@ export function QuickActions({
             key={chip.label}
             onClick={() => handleChip(chip)}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-medium transition-all ${toneCls}`}
-            title={chip.prompt}
+            title={chip.hint || chip.prompt}
           >
             <Icon className="w-3.5 h-3.5" strokeWidth={2.5} />
             <span>{chip.label}</span>

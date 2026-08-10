@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Network, Bot, Clock, HelpCircle, MessageSquare, LayoutDashboard, Link, Search, Pin, ExternalLink, Settings, Monitor, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Network, Bot, Clock, HelpCircle, MessageSquare, LayoutDashboard, Link, Search, Bookmark, ListTodo, Settings, Monitor, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { LoginScreen } from './components/LoginScreen';
 import { Sidebar } from './components/Sidebar';
@@ -19,6 +19,7 @@ import { BriefHeader } from './components/BriefHeader';
 import { QuickActions } from './components/QuickActions';
 import { NotificationToast, type ToastItem } from './components/NotificationToast';
 import { CommandPalette } from './components/CommandPalette';
+import { MemorySuggestModal, type MemoryCandidate } from './components/MemorySuggestModal';
 import type { Agent, Session, Message } from './types';
 
 type ViewType = 'dashboard' | 'chat' | 'agents' | 'cron' | 'channels' | 'integrations' | 'workflow';
@@ -168,7 +169,7 @@ function App() {
   }, []);
 
   const {
-    connectionStatus, messages, sendMessage, agents, sessions,
+    connectionStatus, messages, sendMessage, injectAssistantMessage, agents, sessions,
     currentSession, createSession, switchSession, clearSession, loadSessionHistory,
     deleteSession, stopChat, isLoading, apiCallCount, sendRequest, fetchAgents,
   } = useWebSocket({ url: token ? getGatewayUrl(token) : '', token });
@@ -179,11 +180,116 @@ function App() {
     setInjectMessage({ value: text, nonce: Date.now() + Math.floor(Math.random() * 1000) });
   }, []);
 
+  /* biz-picker 프론트 처리 인텐트 핸들러 (LLM 우회) */
+  const handleBizPickerIntent = useCallback(async (intent: string, project: { id: string; name: string }) => {
+    if (intent !== 'last-week-file') return;
+    try {
+      const tokenMatch = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') || '' : '').match(/user(\d+)/i);
+      const userNN = tokenMatch ? tokenMatch[1].padStart(2, '0') : '';
+      const qs = `?project_id=${encodeURIComponent(project.id)}${userNN ? `&userNN=${userNN}` : ''}`;
+      const resp = await fetch(`/api/business-report/last-week-file${qs}`, { credentials: 'include' });
+      const data = await resp.json();
+      if (data.ok) {
+        const card = {
+          title: `주간보고서 · ${data.week_label}`,
+          filename: data.filename,
+          download_url: data.download_url,
+          meta: [`사업: ${data.business_name}`, `기간: ${data.period}`],
+        };
+        injectAssistantMessage('```download-card\n' + JSON.stringify(card) + '\n```');
+        return;
+      }
+      if (data.reason === 'no_last_week_file') {
+        const [from, to] = (data.period || '').split('~').map((s: string) => s.trim());
+        const shortMD = (s: string) => {
+          const m = s.match(/(\d{1,2})[.\s-]+(\d{1,2})\s*$/);
+          return m ? `${parseInt(m[1])}/${parseInt(m[2])}` : s;
+        };
+        const range = `${shortMD(from)}~${shortMD(to)}`;
+        injectAssistantMessage(`지난주 (${range}) 사업 주간보고 파일이 없어요.`);
+        return;
+      }
+      injectAssistantMessage('지난 주 파일 조회 중 오류가 발생했어요.');
+    } catch (err) {
+      console.error('[last-week-file intent] error', err);
+      injectAssistantMessage('지난 주 파일 조회 중 오류가 발생했어요.');
+    }
+  }, [injectAssistantMessage]);
+
   /* 퀵 액션 패널 토글 (대화 중일 때만 의미. 빈 화면은 카드형으로 항상 노출) */
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
 
   /* 통합 검색 팔레트 (Cmd+K / Ctrl+K) */
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  /* 메모리화 모달 — 대화 후보 추출 + 사용자 확정 */
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidate[]>([]);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+
+  const openMemoryFlow = useCallback(async () => {
+    setMemoryOpen(true);
+    setMemoryLoading(true);
+    setMemoryCandidates([]);
+    setMemoryError(null);
+    try {
+      const recent = (messages as Message[]).slice(-30).map(m => ({ role: m.role, content: m.content }));
+      const r = await fetch(`/api/memory/suggest?userNN=${encodeURIComponent(slotForKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: recent }),
+      });
+      /* 502 등 status여도 backend가 JSON으로 에러 본문 보내는 패턴 — text 받아서 parse 시도 */
+      const text = await r.text();
+      let d: { ok?: boolean; candidates?: MemoryCandidate[]; error?: string } | null = null;
+      try { d = text ? JSON.parse(text) : null; }
+      catch { /* JSON 아닌 응답 */ }
+
+      if (!d) {
+        setMemoryError(`서버 응답 비정상 (HTTP ${r.status})${text ? ' · ' + text.slice(0, 120) : ''}`);
+      } else if (!d.ok) {
+        setMemoryError(d.error || `추출 실패 (HTTP ${r.status})`);
+      } else {
+        setMemoryCandidates(d.candidates || []);
+      }
+    } catch (e) {
+      setMemoryError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMemoryLoading(false);
+    }
+  }, [messages, slotForKey]);
+
+  const confirmMemorySave = useCallback(async (selected: MemoryCandidate[]) => {
+    let savedCount = 0;
+    for (const c of selected) {
+      try {
+        const r = await fetch(`/api/memory/remember`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userNN: slotForKey,
+            scope: c.scope,
+            subject: c.subject,
+            body: c.body,
+            tags: c.tags,
+            source: 'chat',
+            source_ref: currentSession || undefined,
+          }),
+        });
+        const d = await r.json();
+        if (d.ok) savedCount++;
+      } catch { /* ignore — 개별 실패 */ }
+    }
+    setMemoryOpen(false);
+    if (savedCount > 0) {
+      pushToast({
+        kind: 'success',
+        title: '메모리 저장됨',
+        body: `${savedCount}건이 비서의 장기 기억으로 저장됐어요.`,
+      });
+    }
+  }, [slotForKey, currentSession]);
 
   /* 사이드바 collapse 토글 — 고정 폭(256px) 열고 닫기. localStorage 저장. Cmd+B 단축키. */
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
@@ -602,11 +708,19 @@ function App() {
                   <Search className="w-3.5 h-3.5" />
                   <kbd className="text-[9px] font-mono opacity-60">⌘K</kbd>
                 </button>
-                <button className="w-7 h-7 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all" title="고정 (예정)">
-                  <Pin className="w-3.5 h-3.5" />
+                <button
+                  onClick={openMemoryFlow}
+                  disabled={!currentSession || isLoading}
+                  className="w-7 h-7 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  title="이 대화 메모리화 — 비서가 기억할 항목 추출"
+                >
+                  <Bookmark className="w-3.5 h-3.5" />
                 </button>
-                <button className="w-7 h-7 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all" title="내보내기 (예정)">
-                  <ExternalLink className="w-3.5 h-3.5" />
+                <button
+                  className="w-7 h-7 rounded-lg border border-border-color bg-card flex items-center justify-center text-text-secondary hover:text-accent hover:border-accent/20 transition-all"
+                  title="액션 추출 (예정) — 대화에서 할 일 / 미팅 / 마감 추출"
+                >
+                  <ListTodo className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
@@ -622,7 +736,7 @@ function App() {
           ) : currentView === 'chat' ? (
             <>
               {currentSession ? (
-                <MessageList messages={messages} agents={agents} />
+                <MessageList messages={messages} agents={agents} onSendMessage={sendMessage} onPrefill={injectPrefill} onIntentPick={handleBizPickerIntent} />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 text-text-secondary overflow-y-auto">
                   <div className="text-5xl mb-4">{currentAgentData?.emoji || '💬'}</div>
@@ -633,8 +747,17 @@ function App() {
                     variant="card"
                     agents={agents}
                     currentAgentId={currentAgentData?.id}
-                    onQuickPrompt={injectPrefill}
+                    onQuickPrompt={(text) => {
+                      /* 빈 채팅에서 즉시 전송: 세션 없으면 새로 만든 후 sendMessage */
+                      if (currentSession) { sendMessage(text); }
+                      else if (currentAgentData) {
+                        createSession(currentAgentData.id);
+                        setTimeout(() => sendMessage(text), 200);
+                      }
+                      else { injectPrefill(text); }
+                    }}
                     onPrefillMention={injectPrefill}
+                    onInjectAssistant={injectAssistantMessage}
                     onCreateAgent={() => setCurrentView('agents')}
                   />
                 </div>
@@ -651,6 +774,7 @@ function App() {
                     setQuickActionsOpen(false);
                   }}
                   onPrefillMention={injectPrefill}
+                  onInjectAssistant={injectAssistantMessage}
                   onCreateAgent={() => setCurrentView('agents')}
                   onAfterPick={() => setQuickActionsOpen(false)}
                 />
@@ -670,7 +794,7 @@ function App() {
               />
             </>
           ) : currentView === 'agents' ? (
-            <AgentManager sendRequest={sendRequest} onAgentsChanged={fetchAgents} token={token} />
+            <AgentManager sendRequest={sendRequest} onAgentsChanged={fetchAgents} token={token} connected={connectionStatus.connected} />
           ) : currentView === 'workflow' ? (
             <WorkflowView
               token={token}
@@ -683,7 +807,7 @@ function App() {
               onOpenVNC={() => setShowVNC(true)}
             />
           ) : currentView === 'cron' ? (
-            <CronManager sendRequest={sendRequest} agents={agents} />
+            <CronManager sendRequest={sendRequest} agents={agents} connected={connectionStatus.connected} />
           ) : currentView === 'channels' ? (
             <ChannelManager sendRequest={sendRequest} agents={agents} token={token} />
           ) : currentView === 'integrations' ? (
@@ -720,6 +844,16 @@ function App() {
 
       {/* 자비스 푸시 토스트 — 우상단 고정 */}
       <NotificationToast toasts={toasts} onDismiss={dismissToast} />
+
+      {/* 메모리화 모달 — 헤더 Bookmark 클릭 시 등장 */}
+      <MemorySuggestModal
+        open={memoryOpen}
+        loading={memoryLoading}
+        candidates={memoryCandidates}
+        error={memoryError}
+        onClose={() => setMemoryOpen(false)}
+        onConfirm={confirmMemorySave}
+      />
     </div>
   );
 }

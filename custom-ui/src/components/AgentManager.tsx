@@ -6,6 +6,7 @@ interface AgentManagerProps {
   sendRequest: (method: string, params?: Record<string, unknown>) => Promise<ProtocolFrame>;
   onAgentsChanged: () => void;
   token?: string;
+  connected?: boolean;
 }
 
 interface AgentEntry {
@@ -24,7 +25,7 @@ interface AgentFile {
   content?: string;
 }
 
-export function AgentManager({ sendRequest, onAgentsChanged, token = '' }: AgentManagerProps) {
+export function AgentManager({ sendRequest, onAgentsChanged, token = '', connected = true }: AgentManagerProps) {
   const syncAgents = async () => {
     const userMatch = token.match(/user(\d+)/);
     if (!userMatch) return;
@@ -148,7 +149,11 @@ ${autoEndMarker}`;
     }
   }, [sendRequest]);
 
-  useEffect(() => { loadAgents(); }, [loadAgents]);
+  /* WebSocket 연결 후에만 로드 (새로고침 시 연결 준비 대기) */
+  useEffect(() => {
+    if (!connected) return;
+    loadAgents();
+  }, [loadAgents, connected]);
 
   const showMessage = (msg: string, isError = false) => {
     if (isError) { setError(msg); setSuccess(''); }

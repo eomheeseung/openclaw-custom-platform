@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { BusinessReportSection } from './BusinessReportSection';
 
 function getUserNN(): string {
   return (new URLSearchParams(window.location.search).get('token') || '').replace(/\D/g, '') || '01';
@@ -224,6 +225,8 @@ export function IntegrationsPage() {
           </div>
         </div>
       )}
+
+      <BusinessReportSection userNN={getUserNN()} />
     </div>
   );
 }
