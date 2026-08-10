@@ -38,6 +38,44 @@ const crypto = require('crypto');
 const { openDb } = require('./admin-db/lib/db');
 const { startWatcher } = require('./admin-db/watcher');
 const { catchup } = require('./admin-db/catchup');
+
+// per-user memories DB (SQLite + FTS5)
+const { openMemoryDb } = require('./memories/lib/db');
+
+function safeJsonParse(s, fallback) {
+  try { return JSON.parse(s); } catch { return fallback; }
+}
+
+/* Moonshot multi-key rotation — 429/401/403 받으면 다음 키. 60초 cooldown. */
+let _moonshotKeyIdx = -1;
+const _moonshotKeyCooldown = new Map(); // key -> lastFailMs
+const MOONSHOT_COOLDOWN_MS = 60_000;
+
+function moonshotKeys() {
+  const list = (process.env.MOONSHOT_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (list.length > 0) return list;
+  const primary = (process.env.MOONSHOT_API_KEY || '').trim();
+  return primary ? [primary] : [];
+}
+
+function nextMoonshotKey() {
+  const keys = moonshotKeys();
+  if (keys.length === 0) return null;
+  const now = Date.now();
+  /* cooldown 안 걸린 키 우선 — 라운드 로빈 시작점부터 일주 */
+  for (let i = 0; i < keys.length; i++) {
+    _moonshotKeyIdx = (_moonshotKeyIdx + 1) % keys.length;
+    const k = keys[_moonshotKeyIdx];
+    const last = _moonshotKeyCooldown.get(k) || 0;
+    if (now - last > MOONSHOT_COOLDOWN_MS) return k;
+  }
+  /* 다 cooldown 중이어도 그래도 하나 시도 (가장 최근 마지막 실패 키 다음 키) */
+  return keys[_moonshotKeyIdx];
+}
+
+function markMoonshotKeyFail(key) {
+  if (key) _moonshotKeyCooldown.set(key, Date.now());
+}
 let _adminDb = null;
 function getAdminDb() {
   if (_adminDb) return _adminDb;
@@ -153,7 +191,7 @@ const sessions = new Map();
 // --- Helpers ---
 
 function validateUserNN(userNN) {
-  return /^(0[1-9]|1[0-5])$/.test(userNN);
+  return /^(0[1-9]|1[0-6])$/.test(userNN);
 }
 
 function loadUsers() {
@@ -178,6 +216,7 @@ const MEMBER_MAP = {
   '김다영': 'da0ab@tideflo.com',
   '차명건': 'blueyooe@tideflo.com',
   '황인영': '0930dlsdud@tideflo.com',
+  '정유진': 'yj08@tideflo.com',
 };
 
 function resolveEmail(nameOrEmail) {
@@ -302,7 +341,7 @@ function httpPost(url, params) {
 
 function findNextAvailableSlot(users) {
   const taken = new Set(Object.values(users));
-  for (let i = 1; i <= 15; i++) {
+  for (let i = 1; i <= 16; i++) {
     const nn = String(i).padStart(2, '0');
     if (!taken.has(nn)) return nn;
   }
@@ -674,7 +713,7 @@ const server = http.createServer(async (req, res) => {
         userNN = findNextAvailableSlot(users);
         if (!userNN) {
           res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end('<h2>사용자 슬롯 부족</h2><p>모든 슬롯(01~14)이 할당되어 있습니다.</p><a href="/">돌아가기</a>');
+          res.end('<h2>사용자 슬롯 부족</h2><p>모든 슬롯(01~16)이 할당되어 있습니다.</p><a href="/">돌아가기</a>');
           return;
         }
         users[email] = userNN;
@@ -717,6 +756,8 @@ const server = http.createServer(async (req, res) => {
       } catch { /* ignore */ }
       const redirectUrl = returnTo === '/admin' ? '/admin' : `/?token=${token}`;
 
+      /* Set-Cookie는 배열로 넘겨야 각 쿠키가 별개 헤더로 전송됨.
+         이전엔 .join(', ')로 합쳐서 브라우저가 쿠키 하나만 파싱하는 버그 있었음. */
       res.writeHead(302, {
         Location: redirectUrl,
         'Set-Cookie': [
@@ -725,7 +766,7 @@ const server = http.createServer(async (req, res) => {
           `user_name=${encodeURIComponent(name)}; Path=/; Max-Age=86400`,
           `user_nn=${userNN}; Path=/; Max-Age=86400`,
           `gateway_token=${token}; Path=/; Max-Age=86400`,
-        ].join(', '),
+        ],
       });
       res.end();
     } catch (err) {
@@ -758,10 +799,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Set-Cookie': [
-        'session=; Path=/; Max-Age=0', 'user_email=; Path=/; Max-Age=0',
-        'user_name=; Path=/; Max-Age=0', 'user_nn=; Path=/; Max-Age=0',
+        'session=; Path=/; Max-Age=0',
+        'user_email=; Path=/; Max-Age=0',
+        'user_name=; Path=/; Max-Age=0',
+        'user_nn=; Path=/; Max-Age=0',
         'gateway_token=; Path=/; Max-Age=0',
-      ].join(', '),
+      ],
     });
     res.end(JSON.stringify({ ok: true }));
     return;
@@ -902,17 +945,129 @@ const server = http.createServer(async (req, res) => {
         req2.end();
       });
 
-      Promise.all(keys.map((k, i) => pingKey(k).then(r => ({
-        label: `key${i + 1}`,
-        masked: masked(k),
-        ...r,
-      })))).then((results) => {
+      /* Anthropic ping — Moonshot 과 실패 표현이 다르다:
+         크레딧 소진이 429 가 아니라 400 + "credit balance is too low" 로 온다.
+         잔액 조회 API 가 없어서 금액은 못 보여주고, 살아있는지 + 분당 한도만 확인 가능.
+         조직/워크스페이스 ID 는 응답 헤더로만 나온다 (에러 응답에도 실려 옴). */
+      const pingAnthropic = (key) => new Promise((resolve) => {
+        const data = JSON.stringify({
+          model: 'claude-sonnet-5',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'hi' }],
+        });
+        const req2 = https.request({
+          method: 'POST', hostname: 'api.anthropic.com', path: '/v1/messages',
+          headers: {
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(data),
+          },
+          timeout: 10000,
+        }, (resp) => {
+          let body = '';
+          resp.on('data', c => body += c);
+          resp.on('end', () => {
+            const h = resp.headers;
+            let status = 'unknown';
+            let reason = null;
+            if (resp.statusCode === 200) status = 'live';
+            else if (resp.statusCode === 401 || resp.statusCode === 403) status = 'auth_error';
+            else if (resp.statusCode === 429) status = 'rate_limit';
+            else {
+              try { reason = JSON.parse(body).error?.message || null; } catch { /* noop */ }
+              /* 크레딧 소진은 400 으로 온다 — Moonshot 분류(429=한도)와 다르므로 별도 상태 */
+              status = (reason && /credit balance is too low/i.test(reason))
+                ? 'credit_exhausted'
+                : `http_${resp.statusCode}`;
+            }
+            resolve({
+              status, httpCode: resp.statusCode, reason,
+              orgId: h['anthropic-organization-id'] || null,
+              workspaceId: h['anthropic-workspace-id'] || null,
+              limits: h['anthropic-ratelimit-requests-limit'] ? {
+                requests: h['anthropic-ratelimit-requests-limit'],
+                inputTokens: h['anthropic-ratelimit-input-tokens-limit'] || null,
+                outputTokens: h['anthropic-ratelimit-output-tokens-limit'] || null,
+              } : null,
+            });
+          });
+        });
+        req2.on('error', e => resolve({ status: 'network_error', reason: e.message }));
+        req2.on('timeout', () => { req2.destroy(); resolve({ status: 'timeout' }); });
+        req2.write(data);
+        req2.end();
+      });
+
+      /* 어느 사용자가 Anthropic 을 primary 로 쓰는지 (openclaw.json 스캔).
+         16명 중 일부만 쓰므로, 장애 시 영향 범위를 바로 알 수 있어야 한다. */
+      const anthropicUsers = [];
+      for (let i = 1; i <= 16; i++) {
+        const nn = String(i).padStart(2, '0');
+        try {
+          const cfg = fs.readFileSync(`/opt/openclaw/data/user${nn}/openclaw.json`, 'utf8');
+          if (/"primary"\s*:\s*"anthropic\//.test(cfg)) anthropicUsers.push(`user${nn}`);
+        } catch { /* 없는 슬롯 무시 */ }
+      }
+
+      /* 최근 24h 동안 Anthropic 이 실제로 반환한 에러를 컨테이너 로그에서 수집.
+         ping 은 "지금 이 순간"만 보여주므로, 간헐적 실패·과거 장애는 이걸로만 보인다.
+         (8/3~8/4 크레딧 소진 때 화면상 정상으로 보였던 게 이 정보가 없어서였음) */
+      const collectAnthropicErrors = (users) => Promise.all(users.map(u => new Promise((resolve) => {
+        execFile('docker', ['logs', `openclaw-${u}`, '--since', '24h'],
+          { maxBuffer: 32 * 1024 * 1024, timeout: 15000 },
+          (err, stdout, stderr) => {
+            const out = `${stdout || ''}\n${stderr || ''}`;
+            const rows = [];
+            for (const line of out.split('\n')) {
+              if (!/provider=anthropic/.test(line) || !/isError=true/.test(line)) continue;
+              const time = (line.match(/^(\d{4}-\d{2}-\d{2}T[\d:]{8})/) || [])[1] || null;
+              let msg = (line.match(/error=(.*?)(?:\s+rawError=|$)/) || [])[1] || line.slice(0, 200);
+              msg = msg.trim().slice(0, 300);
+              const httpCode = (line.match(/rawError=(\d{3})/) || [])[1] || null;
+              rows.push({ time, user: u, message: msg, httpCode });
+            }
+            resolve(rows);
+          });
+      }))).then(all => {
+        const flat = all.flat().sort((a, b) => String(b.time).localeCompare(String(a.time)));
+        const byMessage = {};
+        for (const r of flat) {
+          const k = r.message.slice(0, 80);
+          byMessage[k] = (byMessage[k] || 0) + 1;
+        }
+        return {
+          count: flat.length,
+          lastAt: flat.length ? flat[0].time : null,
+          recent: flat.slice(0, 15),
+          summary: Object.entries(byMessage)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([message, n]) => ({ message, count: n })),
+        };
+      }).catch(() => null);
+
+      const antKey = (process.env.ANTHROPIC_API_KEY || '').trim();
+
+      Promise.all([
+        Promise.all(keys.map((k, i) => pingKey(k).then(r => ({
+          label: `key${i + 1}`,
+          masked: masked(k),
+          ...r,
+        })))),
+        antKey ? pingAnthropic(antKey) : Promise.resolve(null),
+        anthropicUsers.length ? collectAnthropicErrors(anthropicUsers) : Promise.resolve(null),
+      ]).then(([results, ant, antErrors]) => {
         jsonRes(res, 200, {
           ok: true,
           provider: 'moonshot',
           count: keys.length,
           mode: keys.length > 1 ? 'round-robin' : 'single',
           keys: results,
+          /* 기존 필드는 그대로 두고 anthropic 만 덧붙임 (프론트 하위호환) */
+          anthropic: antKey
+            ? { masked: masked(antKey), users: anthropicUsers, ...ant, errors: antErrors }
+            : null,
         });
       }).catch(e => jsonRes(res, 500, { ok: false, error: e.message }));
     } catch (e) {
@@ -939,7 +1094,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const slots = [];
-    for (let i = 1; i <= 15; i++) {
+    for (let i = 1; i <= 16; i++) {
       const nn = String(i).padStart(2, '0');
       const email = slotToEmail[nn] || null;
       slots.push({
@@ -1248,6 +1403,116 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* ========== 시스템 기능 배포 관리 (business-report 등) ==========
+     매니페스트: /opt/openclaw/business-report-deploy/features.json
+     등록 상태: /opt/openclaw/business-report-deploy/enrolled-users.json
+     스크립트: enroll.sh / unenroll.sh
+  */
+  const BR_DEPLOY_DIR = '/opt/openclaw/business-report-deploy';
+
+  function loadFeaturesManifest() {
+    try { return JSON.parse(fs.readFileSync(path.join(BR_DEPLOY_DIR, 'features.json'), 'utf-8')); }
+    catch { return { features: [] }; }
+  }
+  function loadEnrolledUsers() {
+    try { return JSON.parse(fs.readFileSync(path.join(BR_DEPLOY_DIR, 'enrolled-users.json'), 'utf-8')); }
+    catch { return {}; }
+  }
+
+  /* GET /api/admin/features — 매니페스트 + 각 사용자 활성화 상태 */
+  if (req.method === 'GET' && url.pathname === '/api/admin/features') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    const manifest = loadFeaturesManifest();
+    const enrolled = loadEnrolledUsers();
+    jsonRes(res, 200, { ok: true, features: manifest.features || [], enrolled });
+    return;
+  }
+
+  /* POST /api/admin/features/enroll  body: { featureId, userNN } */
+  if (req.method === 'POST' && url.pathname === '/api/admin/features/enroll') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const body = await parseBody(req);
+      const featureId = String(body.featureId || '').trim();
+      const userNN = String(body.userNN || '').trim();
+      if (!featureId || !/^\d{2}$/.test(userNN)) {
+        jsonRes(res, 400, { ok: false, error: 'featureId 와 userNN(2자리) 필수' }); return;
+      }
+      const script = path.join(BR_DEPLOY_DIR, 'enroll.sh');
+      if (!fs.existsSync(script)) { jsonRes(res, 500, { ok: false, error: 'enroll.sh 없음' }); return; }
+      const { execSync } = require('child_process');
+      const out = execSync(`${script} ${userNN}`, { encoding: 'utf-8', timeout: 30000 });
+      jsonRes(res, 200, { ok: true, log: out });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message, log: err.stdout || err.stderr });
+    }
+    return;
+  }
+
+  /* POST /api/admin/features/unenroll  body: { featureId, userNN } */
+  if (req.method === 'POST' && url.pathname === '/api/admin/features/unenroll') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const body = await parseBody(req);
+      const featureId = String(body.featureId || '').trim();
+      const userNN = String(body.userNN || '').trim();
+      if (!featureId || !/^\d{2}$/.test(userNN)) {
+        jsonRes(res, 400, { ok: false, error: 'featureId 와 userNN(2자리) 필수' }); return;
+      }
+      const script = path.join(BR_DEPLOY_DIR, 'unenroll.sh');
+      if (!fs.existsSync(script)) { jsonRes(res, 500, { ok: false, error: 'unenroll.sh 없음' }); return; }
+      const { execSync } = require('child_process');
+      const out = execSync(`${script} ${userNN}`, { encoding: 'utf-8', timeout: 30000 });
+      jsonRes(res, 200, { ok: true, log: out });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message, log: err.stdout || err.stderr });
+    }
+    return;
+  }
+
+  /* POST /api/admin/features/deploy-updates  body: { featureId }
+     중앙 SOUL/스크립트 변경 후 활성 사용자에게 전체 재배포 */
+  if (req.method === 'POST' && url.pathname === '/api/admin/features/deploy-updates') {
+    const auth = getAuthSession(req);
+    if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const body = await parseBody(req);
+      const featureId = String(body.featureId || '').trim();
+      if (!featureId) { jsonRes(res, 400, { ok: false, error: 'featureId 필수' }); return; }
+      const manifest = loadFeaturesManifest();
+      const feature = (manifest.features || []).find(f => f.id === featureId);
+      if (!feature) { jsonRes(res, 404, { ok: false, error: '매니페스트에 없음' }); return; }
+      const enrolled = loadEnrolledUsers();
+      const users = enrolled[featureId] || [];
+      const results = [];
+      for (const nn of users) {
+        const workspace = `/opt/openclaw/data/user${nn}/workspace-${featureId}`;
+        try {
+          fs.mkdirSync(workspace, { recursive: true });
+          fs.copyFileSync(feature.soul_template, path.join(workspace, 'SOUL.md'));
+          fs.chmodSync(path.join(workspace, 'SOUL.md'), 0o666);
+          // 스크립트도 재배포
+          const scriptsDir = `/opt/openclaw/shared/user${nn}/business-report/scripts`;
+          fs.mkdirSync(scriptsDir, { recursive: true });
+          for (const f of fs.readdirSync(feature.scripts_dir)) {
+            fs.copyFileSync(path.join(feature.scripts_dir, f), path.join(scriptsDir, f));
+            fs.chmodSync(path.join(scriptsDir, f), 0o755);
+          }
+          results.push({ userNN: nn, ok: true });
+        } catch (e) {
+          results.push({ userNN: nn, ok: false, error: e.message });
+        }
+      }
+      jsonRes(res, 200, { ok: true, results, count: users.length });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   // GET /api/admin/config
   if (req.method === 'GET' && url.pathname === '/api/admin/config') {
     const auth = getAuthSession(req);
@@ -1259,7 +1524,7 @@ const server = http.createServer(async (req, res) => {
         anthropic: !!process.env.ANTHROPIC_API_KEY,
         moonshot: !!process.env.MOONSHOT_API_KEY,
       },
-      totalSlots: 15,
+      totalSlots: 16,
       usersAssigned: Object.keys(loadUsers()).length,
       activeSessions: sessions.size,
     });
@@ -2233,6 +2498,827 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /api/calendar/today?userNN=01
+  /* ===== Memories (per-user SQLite + FTS5) ===== */
+
+  /* POST /api/memory/remember — body: { scope?, subject, body, tags?, source?, source_ref?, expires_at? }
+     scope: 'general' | 'person:이름' | 'project:키' 등 자유 문자열. tags: string[] (JSON 직렬화). */
+  if (req.method === 'POST' && url.pathname === '/api/memory/remember') {
+    try {
+      const params = await parseBody(req);
+      const userNN = resolveUserNN(req, params.userNN || url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const subject = String(params.subject || '').trim();
+      const body = String(params.body || '').trim();
+      if (!subject || !body) { jsonRes(res, 400, { ok: false, error: 'subject + body 필수' }); return; }
+      const scope = String(params.scope || 'general').trim().slice(0, 200);
+      const tagsArr = Array.isArray(params.tags) ? params.tags.map(t => String(t)).slice(0, 20) : [];
+      const tagsJson = tagsArr.length > 0 ? JSON.stringify(tagsArr) : null;
+      const source = params.source ? String(params.source).slice(0, 50) : null;
+      const sourceRef = params.source_ref ? String(params.source_ref).slice(0, 200) : null;
+      const expiresAt = typeof params.expires_at === 'number' ? params.expires_at : null;
+
+      const db = openMemoryDb(userNN);
+      const info = db.prepare(`
+        INSERT INTO memories(scope, subject, body, tags, source, source_ref, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(scope, subject, body, tagsJson, source, sourceRef, expiresAt);
+      jsonRes(res, 200, { ok: true, id: info.lastInsertRowid, scope, subject });
+    } catch (err) {
+      console.error('[memory] remember error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* GET /api/memory/recall?q=...&scope=...&limit=10&since=...
+     q: FTS5 검색어 (subject + body + tags 통합). 빈 query면 최신순. */
+  if (req.method === 'GET' && url.pathname === '/api/memory/recall') {
+    try {
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const q = (url.searchParams.get('q') || '').trim();
+      const scope = (url.searchParams.get('scope') || '').trim();
+      const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') || '10', 10) || 10));
+      const since = parseInt(url.searchParams.get('since') || '', 10);
+
+      const db = openMemoryDb(userNN);
+      let rows;
+      if (q) {
+        /* FTS5 MATCH + LIKE fallback (한글 토큰화 한계 우회 + scope/subject/body/tags 통합 매칭) */
+        const safeQ = q.replace(/["']/g, ' ').replace(/\s+/g, ' ').trim();
+        const ftsQ = safeQ.split(' ').filter(Boolean).map(t => `"${t}"`).join(' OR ');
+        const likeQ = `%${safeQ}%`;
+        const matchClause = `(
+          m.id IN (SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?)
+          OR m.scope LIKE ?
+          OR m.subject LIKE ?
+          OR m.body LIKE ?
+          OR m.tags LIKE ?
+        )`;
+        const where = [matchClause];
+        const args = [ftsQ, likeQ, likeQ, likeQ, likeQ];
+        if (scope) { where.push('m.scope = ?'); args.push(scope); }
+        if (Number.isFinite(since)) { where.push('m.created_at >= ?'); args.push(since); }
+        where.push('(m.expires_at IS NULL OR m.expires_at > ?)');
+        args.push(Date.now());
+        rows = db.prepare(`
+          SELECT DISTINCT m.id, m.scope, m.subject, m.body, m.tags, m.source, m.created_at, m.last_used_at, m.use_count
+          FROM memories m
+          WHERE ${where.join(' AND ')}
+          ORDER BY m.created_at DESC
+          LIMIT ?
+        `).all(...args, limit);
+      } else {
+        const where = ['(expires_at IS NULL OR expires_at > ?)'];
+        const args = [Date.now()];
+        if (scope) { where.push('scope = ?'); args.push(scope); }
+        if (Number.isFinite(since)) { where.push('created_at >= ?'); args.push(since); }
+        rows = db.prepare(`
+          SELECT id, scope, subject, body, tags, source, created_at, last_used_at, use_count
+          FROM memories
+          WHERE ${where.join(' AND ')}
+          ORDER BY created_at DESC
+          LIMIT ?
+        `).all(...args, limit);
+      }
+
+      /* last_used_at + use_count 갱신 */
+      if (rows.length > 0) {
+        const ids = rows.map(r => r.id);
+        const now = Date.now();
+        const placeholders = ids.map(() => '?').join(',');
+        db.prepare(`UPDATE memories SET last_used_at = ?, use_count = use_count + 1 WHERE id IN (${placeholders})`)
+          .run(now, ...ids);
+      }
+
+      /* tags JSON → array */
+      const items = rows.map(r => ({
+        ...r,
+        tags: r.tags ? safeJsonParse(r.tags, []) : [],
+      }));
+      jsonRes(res, 200, { ok: true, count: items.length, items });
+    } catch (err) {
+      console.error('[memory] recall error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* GET /api/memory/list?limit=20&offset=0 — 단순 시간순 페이지네이션 (관리/디버그용) */
+  if (req.method === 'GET' && url.pathname === '/api/memory/list') {
+    try {
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10) || 20));
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
+      const db = openMemoryDb(userNN);
+      const total = db.prepare('SELECT COUNT(*) AS n FROM memories').get().n;
+      const rows = db.prepare(`
+        SELECT id, scope, subject, body, tags, source, created_at, last_used_at, use_count
+        FROM memories
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+      `).all(limit, offset);
+      const items = rows.map(r => ({ ...r, tags: r.tags ? safeJsonParse(r.tags, []) : [] }));
+      jsonRes(res, 200, { ok: true, total, offset, limit, items });
+    } catch (err) {
+      console.error('[memory] list error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* POST /api/memory/suggest — body: { messages: [{ role, content }], hint? }
+     비서한테 후보 추출 prompt 보내고 candidates JSON 응답. UI 모달용. */
+  if (req.method === 'POST' && url.pathname === '/api/memory/suggest') {
+    try {
+      const params = await parseBody(req);
+      const userNN = resolveUserNN(req, params.userNN || url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const messages = Array.isArray(params.messages) ? params.messages : [];
+      if (messages.length === 0) { jsonRes(res, 400, { ok: false, error: 'messages 필수' }); return; }
+
+      /* 대화 본문 합치기 (최근 30개 + 사용자/비서만, 시스템 raw 제외) */
+      const trimmed = messages.slice(-30).filter(m => {
+        const role = String(m.role || '');
+        const c = String(m.content || '').trim();
+        if (!c) return false;
+        if (role !== 'user' && role !== 'assistant') return false;
+        /* 명백한 시스템/도구 dump 마커 제외 (frontend filter와 비슷) */
+        if (c.startsWith('System (untrusted)')) return false;
+        if (c.includes('An async command you ran earlier')) return false;
+        if (c.startsWith('[Bootstrap pending]')) return false;
+        return true;
+      });
+
+      const transcript = trimmed.map(m => {
+        const role = m.role === 'user' ? '사용자' : '비서';
+        const content = String(m.content || '').slice(0, 1500);
+        return `[${role}] ${content}`;
+      }).join('\n\n');
+
+      const hint = params.hint ? String(params.hint).slice(0, 500) : '';
+
+      const systemPrompt = `너는 다음 대화에서 사용자가 장기적으로 기억할 만한 사실/약속/결정/관찰을 추출하는 보조 도구다.
+
+규칙:
+- 명백한 사실/결정/약속만 추출. 모호한 추측 금지.
+- 한 항목은 1개의 결정/약속/사실에 대응.
+- 사람 이름이 등장하면 scope를 "person:이름" 형식으로.
+- 프로젝트나 시스템 이름이 등장하면 scope를 "project:키" 형식으로.
+- 그 외는 scope = "general".
+- subject는 한국어 한 줄 8~30자.
+- body는 한국어 1~3문장.
+- tags는 한국어 키워드 1~4개 (예: 미팅, 약속, 결정, 마감).
+- expires_at_hint는 명확한 시간 제한이 있으면 ISO 8601 (YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm)으로. 없으면 null.
+- 도구 호출 결과나 시스템 dump는 무시.
+- 최대 5개. 없으면 빈 배열.
+
+응답은 반드시 다음 JSON 단일 객체만 출력:
+{"candidates":[{"scope":"...","subject":"...","body":"...","tags":["..."],"expires_at_hint":"..."|null}]}`;
+
+      const userPrompt = `대화:\n\n${transcript}\n\n${hint ? `힌트: ${hint}\n\n` : ''}위 대화에서 기억할 후보를 추출해서 JSON으로 응답.`;
+
+      const totalKeys = moonshotKeys().length;
+      if (totalKeys === 0) { jsonRes(res, 503, { ok: false, error: 'MOONSHOT_API_KEY not set' }); return; }
+
+      /* 메모리 추출 모델 우선순위: k2.5(빠르고 저렴) 우선, 다 fail이면 k2.6(큐 한산) fallback */
+      const MEMORY_MODELS = ['kimi-k2.5', 'kimi-k2.6'];
+      const MAX_RETRY_PER_MODEL = Math.min(totalKeys + 1, 4);
+
+      let moonshotResult = { status: 599, body: 'no attempt' };
+      let attemptsMade = 0;
+      let usedModel = null;
+
+      outer:
+      for (const model of MEMORY_MODELS) {
+        usedModel = model;
+        const bodyForModel = JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 1,
+          /* k2.6은 reasoning 사용해서 토큰 더 필요 — 모델별로 max_tokens 다르게 */
+          max_tokens: model === 'kimi-k2.6' ? 4000 : 2000,
+          response_format: { type: 'json_object' },
+        });
+
+        for (let attempt = 0; attempt < MAX_RETRY_PER_MODEL; attempt++) {
+          const apiKey = nextMoonshotKey();
+          if (!apiKey) break outer;
+          attemptsMade++;
+          moonshotResult = await new Promise((resolve) => {
+            const req2 = https.request({
+              method: 'POST',
+              hostname: 'api.moonshot.ai',
+              path: '/v1/chat/completions',
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(bodyForModel),
+              },
+              timeout: 90_000,
+            }, (resp) => {
+              let buf = '';
+              resp.on('data', c => buf += c);
+              resp.on('end', () => resolve({ status: resp.statusCode, body: buf }));
+            });
+            req2.on('error', err => resolve({ status: 599, body: err.message }));
+            req2.on('timeout', () => { req2.destroy(); resolve({ status: 598, body: 'timeout' }); });
+            req2.write(bodyForModel);
+            req2.end();
+          });
+
+          if (moonshotResult.status === 200) break outer;
+          if (moonshotResult.status === 429 || moonshotResult.status === 401 || moonshotResult.status === 403) {
+            markMoonshotKeyFail(apiKey);
+            console.log(`[memory] suggest model=${model} attempt ${attempt + 1}/${MAX_RETRY_PER_MODEL} key=${apiKey.slice(0,8)}… status=${moonshotResult.status}`);
+            continue;
+          }
+          /* 회복 불가능 (400 등) — 이 모델은 포기, 다음 모델로 */
+          break;
+        }
+      }
+
+      if (moonshotResult.status !== 200) {
+        jsonRes(res, 502, {
+          ok: false,
+          error: moonshotResult.status === 429 ? 'k2.5/k2.6 모두 과부하 (잠시 후 다시)' : 'Moonshot 호출 실패',
+          status: moonshotResult.status,
+          model: usedModel,
+          attempts: attemptsMade,
+          detail: moonshotResult.body.slice(0, 300),
+        });
+        return;
+      }
+
+      let parsed;
+      try {
+        const data = JSON.parse(moonshotResult.body);
+        /* k2.6은 reasoning_content + content 분리 — content 우선, 비면 reasoning에서 JSON 추출 */
+        const msg = data.choices?.[0]?.message || {};
+        let text = (msg.content || '').trim();
+        if (!text && msg.reasoning_content) {
+          /* reasoning_content에서 JSON 블록 추출 시도 */
+          const m = String(msg.reasoning_content).match(/\{[\s\S]*"candidates"[\s\S]*\}/);
+          if (m) text = m[0];
+        }
+        parsed = JSON.parse(text);
+      } catch (e) {
+        jsonRes(res, 502, { ok: false, error: 'JSON parse 실패', model: usedModel, detail: e.message });
+        return;
+      }
+
+      const rawCandidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+      const candidates = rawCandidates.slice(0, 5).map(c => ({
+        scope: String(c.scope || 'general').slice(0, 200),
+        subject: String(c.subject || '').slice(0, 200),
+        body: String(c.body || '').slice(0, 2000),
+        tags: Array.isArray(c.tags) ? c.tags.map(t => String(t)).slice(0, 6) : [],
+        expires_at_hint: c.expires_at_hint && typeof c.expires_at_hint === 'string' ? c.expires_at_hint : null,
+      })).filter(c => c.subject && c.body);
+
+      jsonRes(res, 200, { ok: true, count: candidates.length, candidates });
+    } catch (err) {
+      console.error('[memory] suggest error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* POST /api/memory/forget — body: { id } 또는 { ids: [...] } */
+  if (req.method === 'POST' && url.pathname === '/api/memory/forget') {
+    try {
+      const params = await parseBody(req);
+      const userNN = resolveUserNN(req, params.userNN || url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const ids = Array.isArray(params.ids) ? params.ids : (params.id !== undefined ? [params.id] : []);
+      const nums = ids.map(x => parseInt(x, 10)).filter(Number.isFinite);
+      if (nums.length === 0) { jsonRes(res, 400, { ok: false, error: 'id 또는 ids 필수' }); return; }
+      const db = openMemoryDb(userNN);
+      const placeholders = nums.map(() => '?').join(',');
+      const info = db.prepare(`DELETE FROM memories WHERE id IN (${placeholders})`).run(...nums);
+      jsonRes(res, 200, { ok: true, deleted: info.changes });
+    } catch (err) {
+      console.error('[memory] forget error:', err.message);
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* ===== 사업 주간보고 프로젝트 관리 =====
+     저장 위치: /opt/openclaw/data/userNN/business-report/
+       ├─ projects.json          (매니페스트: {projects, default})
+       └─ {project_id}/
+           ├─ meta.json
+           ├─ template.hwpx
+           ├─ auth.env
+           └─ history.json
+     모두 resolveUserNN으로 컨테이너 격리.
+  */
+
+  const brProjectsDir = (nn) => path.join('/opt/openclaw/data', `user${nn}`, 'business-report');
+
+  /* 컨테이너 안 node(uid 1000) 가 읽을 수 있도록 소유권 tideclaw(uid 1000)로 지정 */
+  const BR_OWNER_UID = 1000;
+  const BR_OWNER_GID = 1000;
+  function brChown(p) {
+    try { fs.chownSync(p, BR_OWNER_UID, BR_OWNER_GID); } catch (err) { console.warn('[br] chown failed:', p, err.message); }
+  }
+  function brChownRecursive(dir) {
+    try {
+      brChown(dir);
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) brChownRecursive(full);
+        else brChown(full);
+      }
+    } catch (err) { console.warn('[br] chownR failed:', dir, err.message); }
+  }
+
+  function loadBrManifest(nn) {
+    const p = path.join(brProjectsDir(nn), 'projects.json');
+    if (!fs.existsSync(p)) return { projects: [], default: null };
+    try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { return { projects: [], default: null }; }
+  }
+  function saveBrManifest(nn, data) {
+    const dir = brProjectsDir(nn);
+    if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); brChown(dir); }
+    const p = path.join(dir, 'projects.json');
+    fs.writeFileSync(p, JSON.stringify(data, null, 2));
+    brChown(p);
+  }
+  function loadBrProjectMeta(nn, pid) {
+    const p = path.join(brProjectsDir(nn), pid, 'meta.json');
+    if (!fs.existsSync(p)) return null;
+    try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { return null; }
+  }
+  function saveBrProjectMeta(nn, pid, meta) {
+    const dir = path.join(brProjectsDir(nn), pid);
+    if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); brChown(dir); }
+    const p = path.join(dir, 'meta.json');
+    fs.writeFileSync(p, JSON.stringify(meta, null, 2));
+    brChown(p);
+  }
+  function loadBrAuth(nn, pid) {
+    const p = path.join(brProjectsDir(nn), pid, 'auth.env');
+    if (!fs.existsSync(p)) return {};
+    const env = {};
+    fs.readFileSync(p, 'utf-8').split('\n').forEach(line => {
+      const s = line.trim();
+      if (!s || s.startsWith('#')) return;
+      const i = s.indexOf('=');
+      if (i > 0) env[s.slice(0, i).trim()] = s.slice(i + 1).trim();
+    });
+    return env;
+  }
+  function saveBrAuth(nn, pid, env) {
+    const dir = path.join(brProjectsDir(nn), pid);
+    if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); brChown(dir); }
+    const lines = ['# SR 시스템 인증 (사업별)'];
+    for (const k of ['SR_BASE_URL', 'SR_TENANT', 'SR_API_TOKEN']) {
+      if (env[k]) lines.push(`${k}=${env[k]}`);
+    }
+    const p = path.join(dir, 'auth.env');
+    fs.writeFileSync(p, lines.join('\n') + '\n', { mode: 0o600 });
+    brChown(p);
+  }
+  function maskToken(s) {
+    if (!s) return '';
+    if (s.length <= 16) return '****';
+    return `${s.slice(0, 8)}...${s.slice(-6)}`;
+  }
+  function brProjectStatus(nn, pid) {
+    const auth = loadBrAuth(nn, pid);
+    const meta = loadBrProjectMeta(nn, pid) || {};
+    const templatePath = path.join(brProjectsDir(nn), pid, 'template.hwpx');
+    return {
+      auth_ok: !!(auth.SR_API_TOKEN && auth.SR_TENANT && auth.SR_BASE_URL),
+      auth_masked: auth.SR_API_TOKEN ? maskToken(auth.SR_API_TOKEN) : null,
+      base_url: auth.SR_BASE_URL || null,
+      tenant: auth.SR_TENANT || null,
+      template_exists: fs.existsSync(templatePath),
+      template_size: fs.existsSync(templatePath) ? fs.statSync(templatePath).size : 0,
+      template_original_filename: meta.template_original_filename || null,
+      filename_rule_set: !!meta.template_original_filename,
+    };
+  }
+
+  /* GET /api/business-report/projects — 사업 목록 (상태 요약 포함) */
+  if (req.method === 'GET' && url.pathname === '/api/business-report/projects') {
+    try {
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const m = loadBrManifest(userNN);
+      const items = [];
+      for (const pid of m.projects || []) {
+        const meta = loadBrProjectMeta(userNN, pid);
+        if (!meta) continue;
+        items.push({ ...meta, status: brProjectStatus(userNN, pid) });
+      }
+      jsonRes(res, 200, { ok: true, projects: items, default: m.default });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* GET /api/business-report/projects/{id} — 상세 */
+  {
+    const mmatch = req.method === 'GET' && url.pathname.match(/^\/api\/business-report\/projects\/([^/]+)$/);
+    if (mmatch) {
+      try {
+        const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+        if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+        const pid = decodeURIComponent(mmatch[1]);
+        const meta = loadBrProjectMeta(userNN, pid);
+        if (!meta) { jsonRes(res, 404, { ok: false, error: 'not found' }); return; }
+        jsonRes(res, 200, { ok: true, project: { ...meta, status: brProjectStatus(userNN, pid) } });
+      } catch (err) {
+        jsonRes(res, 500, { ok: false, error: err.message });
+      }
+      return;
+    }
+  }
+
+  /* POST /api/business-report/projects — 새 사업 등록
+     body: { id, name, org, subtitle?, vendor?, week_rule?, is_default?, template_base64 } */
+  if (req.method === 'POST' && url.pathname === '/api/business-report/projects') {
+    try {
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const body = await parseBody(req);
+      const pid = String(body.id || '').trim();
+      if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(pid)) {
+        jsonRes(res, 400, { ok: false, error: 'id는 영소문자/숫자/-, 2~64자' }); return;
+      }
+      const name = String(body.name || '').trim();
+      const org = String(body.org || '').trim();
+      if (!name || !org) { jsonRes(res, 400, { ok: false, error: 'name과 org는 필수' }); return; }
+
+      const projDir = path.join(brProjectsDir(userNN), pid);
+      if (fs.existsSync(projDir)) { jsonRes(res, 409, { ok: false, error: '이미 존재하는 사업 id' }); return; }
+      fs.mkdirSync(projDir, { recursive: true, mode: 0o700 });
+
+      const meta = {
+        id: pid,
+        name,
+        org,
+        subtitle: String(body.subtitle || '').trim(),
+        vendor: String(body.vendor || '').trim(),
+        template_file: 'template.hwpx',
+        week_rule: body.week_rule || 'mon-fri',
+        auto_run: !!body.auto_run,
+        archived: false,
+        created_at: new Date().toISOString(),
+      };
+      saveBrProjectMeta(userNN, pid, meta);
+
+      if (body.template_base64) {
+        try {
+          const buf = Buffer.from(String(body.template_base64), 'base64');
+          if (buf.length < 100) throw new Error('template 파일이 너무 작음');
+          const tp = path.join(projDir, 'template.hwpx');
+          fs.writeFileSync(tp, buf, { mode: 0o600 });
+          brChown(tp);
+          /* 원본 파일명 저장: 파일명 규칙 반영용 */
+          if (body.template_filename) {
+            meta.template_original_filename = String(body.template_filename).trim();
+            saveBrProjectMeta(userNN, pid, meta);
+          }
+        } catch (err) {
+          jsonRes(res, 400, { ok: false, error: `template 저장 실패: ${err.message}` }); return;
+        }
+      }
+
+      const hp = path.join(projDir, 'history.json');
+      fs.writeFileSync(hp, JSON.stringify({ runs: [] }, null, 2), { mode: 0o600 });
+      brChown(hp);
+      brChownRecursive(projDir);
+
+      const m = loadBrManifest(userNN);
+      if (!m.projects.includes(pid)) m.projects.push(pid);
+      saveBrManifest(userNN, m);
+
+      jsonRes(res, 200, { ok: true, project: { ...meta, status: brProjectStatus(userNN, pid) } });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* PUT /api/business-report/projects/{id} — 메타 업데이트 */
+  {
+    const mmatch = req.method === 'PUT' && url.pathname.match(/^\/api\/business-report\/projects\/([^/]+)$/);
+    if (mmatch) {
+      try {
+        const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+        if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+        const pid = decodeURIComponent(mmatch[1]);
+        const meta = loadBrProjectMeta(userNN, pid);
+        if (!meta) { jsonRes(res, 404, { ok: false, error: 'not found' }); return; }
+        const body = await parseBody(req);
+        const updatable = ['name', 'org', 'subtitle', 'vendor', 'week_rule', 'auto_run', 'archived'];
+        for (const k of updatable) {
+          if (k in body) meta[k] = typeof meta[k] === 'boolean' ? !!body[k] : String(body[k] || '').trim();
+        }
+        meta.updated_at = new Date().toISOString();
+        saveBrProjectMeta(userNN, pid, meta);
+
+        // 양식 hwpx 교체 (선택)
+        if (body.template_base64) {
+          try {
+            const buf = Buffer.from(String(body.template_base64), 'base64');
+            if (buf.length < 100) throw new Error('template 파일이 너무 작음');
+            const projDir = path.join(brProjectsDir(userNN), pid);
+            const tp = path.join(projDir, 'template.hwpx');
+            fs.writeFileSync(tp, buf, { mode: 0o600 });
+            brChown(tp);
+            /* 원본 파일명 갱신 */
+            if (body.template_filename) {
+              meta.template_original_filename = String(body.template_filename).trim();
+              saveBrProjectMeta(userNN, pid, meta);
+            }
+          } catch (err) {
+            jsonRes(res, 400, { ok: false, error: `template 저장 실패: ${err.message}` }); return;
+          }
+        }
+
+        jsonRes(res, 200, { ok: true, project: { ...meta, status: brProjectStatus(userNN, pid) } });
+      } catch (err) {
+        jsonRes(res, 500, { ok: false, error: err.message });
+      }
+      return;
+    }
+  }
+
+  /* DELETE /api/business-report/projects/{id} — 삭제 */
+  {
+    const mmatch = req.method === 'DELETE' && url.pathname.match(/^\/api\/business-report\/projects\/([^/]+)$/);
+    if (mmatch) {
+      try {
+        const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+        if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+        const pid = decodeURIComponent(mmatch[1]);
+        const projDir = path.join(brProjectsDir(userNN), pid);
+        if (!fs.existsSync(projDir)) { jsonRes(res, 404, { ok: false, error: 'not found' }); return; }
+        fs.rmSync(projDir, { recursive: true, force: true });
+
+        const m = loadBrManifest(userNN);
+        m.projects = (m.projects || []).filter(x => x !== pid);
+        saveBrManifest(userNN, m);
+        jsonRes(res, 200, { ok: true });
+      } catch (err) {
+        jsonRes(res, 500, { ok: false, error: err.message });
+      }
+      return;
+    }
+  }
+
+  /* PUT /api/business-report/projects/{id}/auth — 인증 저장
+     body: { SR_BASE_URL, SR_TENANT, SR_API_TOKEN } */
+  {
+    const mmatch = req.method === 'PUT' && url.pathname.match(/^\/api\/business-report\/projects\/([^/]+)\/auth$/);
+    if (mmatch) {
+      try {
+        const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+        if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+        const pid = decodeURIComponent(mmatch[1]);
+        if (!loadBrProjectMeta(userNN, pid)) { jsonRes(res, 404, { ok: false, error: 'project not found' }); return; }
+        const body = await parseBody(req);
+        const auth = {
+          SR_BASE_URL: String(body.SR_BASE_URL || '').trim(),
+          SR_TENANT: String(body.SR_TENANT || '').trim(),
+          SR_API_TOKEN: String(body.SR_API_TOKEN || '').trim(),
+        };
+        if (!auth.SR_BASE_URL || !auth.SR_TENANT || !auth.SR_API_TOKEN) {
+          jsonRes(res, 400, { ok: false, error: 'SR_BASE_URL, SR_TENANT, SR_API_TOKEN 모두 필수' }); return;
+        }
+        saveBrAuth(userNN, pid, auth);
+        jsonRes(res, 200, { ok: true, status: brProjectStatus(userNN, pid) });
+      } catch (err) {
+        jsonRes(res, 500, { ok: false, error: err.message });
+      }
+      return;
+    }
+  }
+
+  /* POST /api/business-report/preview-filename — 원본 파일명 → 이번주 치환 미리보기 */
+  if (req.method === 'POST' && url.pathname === '/api/business-report/preview-filename') {
+    try {
+      const auth = getAuthSession(req);
+      if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+      const body = await parseBody(req);
+      const originalFn = String(body.filename || '').trim();
+      if (!originalFn) { jsonRes(res, 400, { ok: false, error: 'filename 필수' }); return; }
+
+      /* 오늘 기준 이번 주 월요일 */
+      const today = new Date();
+      const dow = today.getDay(); // 0=Sun, 1=Mon, ...
+      const daysToMon = dow === 0 ? -6 : 1 - dow;
+      const monday = new Date(today);
+      monday.setDate(today.getDate() + daysToMon);
+      const yyyy = monday.getFullYear();
+      const mm = monday.getMonth() + 1;
+      const dd = monday.getDate();
+
+      /* ISO 4일 규칙: 이번 주 목요일이 속한 월의 몇 주차 */
+      const thursday = new Date(monday);
+      thursday.setDate(monday.getDate() + 3);
+      const effYear = thursday.getFullYear();
+      const effMonth = thursday.getMonth() + 1;
+      const firstOfEffMonth = new Date(effYear, effMonth - 1, 1);
+      const firstThuOffset = (4 - firstOfEffMonth.getDay() + 7) % 7;   // 0=Sun, 4=Thu
+      const firstThu = new Date(effYear, effMonth - 1, 1 + firstThuOffset);
+      const firstMonOfWk1 = new Date(firstThu); firstMonOfWk1.setDate(firstThu.getDate() - 3);
+      const weekNo = Math.floor((monday - firstMonOfWk1) / (7 * 86400000)) + 1;
+
+      const isoDate = `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+      const dotDate = `${yyyy}.${String(mm).padStart(2, '0')}.${String(dd).padStart(2, '0')}`;
+
+      const patterns = [
+        [/\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*주차/, `${effYear}년 ${effMonth}월 ${weekNo}주차`],
+        [/\d{1,2}\s*월\s*\d{1,2}\s*주차/, `${effMonth}월 ${weekNo}주차`],
+        [/\d{4}-\d{2}-\d{2}/, isoDate],
+        [/\d{4}\.\d{2}\.\d{2}/, dotDate],
+      ];
+      for (const [pat, rep] of patterns) {
+        if (pat.test(originalFn)) {
+          const substituted = originalFn.replace(pat, rep);
+          jsonRes(res, 200, { ok: true, detected: true, pattern: pat.source, preview: substituted, replacement: rep });
+          return;
+        }
+      }
+      jsonRes(res, 200, { ok: true, detected: false, preview: null });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* GET /api/business-report/last-week-file — 지난주 hwpx 파일 조회
+     Query: project_id (선택)
+     - default 프로젝트 사용 (없으면 no_default_project 반환)
+     - 지난주 월요일 계산 → substitute 파일명 + 폴백 파일명 시도
+     - 파일 있으면 { ok:true, filename, download_url, week_label, period, business_name }
+     - 없으면 { ok:false, reason:'no_last_week_file'|'no_project', ... } */
+  if (req.method === 'GET' && url.pathname === '/api/business-report/last-week-file') {
+    try {
+      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+
+      const pid = url.searchParams.get('project_id') || '';
+      if (!pid) { jsonRes(res, 400, { ok: false, error: 'Missing project_id' }); return; }
+      const meta = loadBrProjectMeta(userNN, pid);
+      if (!meta) { jsonRes(res, 200, { ok: false, reason: 'no_project' }); return; }
+
+      /* 지난주 월요일 = 이번주 월요일 - 7일 */
+      const today = new Date();
+      const dow = today.getDay();
+      const daysToMon = dow === 0 ? -6 : 1 - dow;
+      const thisMon = new Date(today);
+      thisMon.setDate(today.getDate() + daysToMon);
+      const monday = new Date(thisMon);
+      monday.setDate(thisMon.getDate() - 7);
+      const friday = new Date(monday);
+      friday.setDate(monday.getDate() + 4);
+
+      /* ISO 4일 규칙 · 주차 라벨 */
+      const thursday = new Date(monday);
+      thursday.setDate(monday.getDate() + 3);
+      const effYear = thursday.getFullYear();
+      const effMonth = thursday.getMonth() + 1;
+      const firstOfEffMonth = new Date(effYear, effMonth - 1, 1);
+      const firstThuOffset = (4 - firstOfEffMonth.getDay() + 7) % 7;
+      const firstThu = new Date(effYear, effMonth - 1, 1 + firstThuOffset);
+      const firstMonOfWk1 = new Date(firstThu); firstMonOfWk1.setDate(firstThu.getDate() - 3);
+      const weekNo = Math.floor((monday - firstMonOfWk1) / (7 * 86400000)) + 1;
+
+      const yyyy = monday.getFullYear();
+      const mm = monday.getMonth() + 1;
+      const dd = monday.getDate();
+      const isoDate = `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+      const dotDate = `${yyyy}.${String(mm).padStart(2, '0')}.${String(dd).padStart(2, '0')}`;
+      const periodStr = `${yyyy}. ${String(mm).padStart(2, '0')}. ${String(dd).padStart(2, '0')} ~ ${friday.getFullYear()}. ${String(friday.getMonth() + 1).padStart(2, '0')}. ${String(friday.getDate()).padStart(2, '0')}`;
+      const weekLabel = `${effYear}년 ${effMonth}월 ${weekNo}주차 (${mm}/${dd}~${friday.getMonth() + 1}/${friday.getDate()})`;
+      const weekLabelShort = `${effMonth}월 ${weekNo}주차`;
+
+      /* 후보 파일명 계산 */
+      const candidates = [];
+      const originalFn = meta.template_original_filename;
+      if (originalFn) {
+        const patterns = [
+          [/\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*주차/, `${effYear}년 ${effMonth}월 ${weekNo}주차`],
+          [/\d{1,2}\s*월\s*\d{1,2}\s*주차/, `${effMonth}월 ${weekNo}주차`],
+          [/\d{4}-\d{2}-\d{2}/, isoDate],
+          [/\d{4}\.\d{2}\.\d{2}/, dotDate],
+        ];
+        for (const [pat, rep] of patterns) {
+          if (pat.test(originalFn)) { candidates.push(originalFn.replace(pat, rep)); break; }
+        }
+      }
+      /* 폴백 파일명 규칙 */
+      const business = meta.name || pid;
+      const fnLabel = weekLabel.replace(/ /g, '_').replace(/\//g, '-');
+      candidates.push(`[${business}] ${fnLabel}.hwpx`);
+
+      const outDir = path.join('/opt/openclaw/shared', `user${userNN}`, 'business-report', 'output', pid);
+      let matched = null;
+      for (const cand of candidates) {
+        const p = path.join(outDir, cand);
+        if (fs.existsSync(p) && fs.statSync(p).isFile()) { matched = cand; break; }
+      }
+
+      /* 후보 매칭 실패 · 파일명 문자열로 스캔 폴백 (규칙 변경된 파일 존재 케이스) */
+      if (!matched && fs.existsSync(outDir)) {
+        try {
+          const files = fs.readdirSync(outDir).filter(f => f.endsWith('.hwpx'));
+          /* 공백↔밑줄 무시하고 라벨 매칭 */
+          const normalize = (s) => s.replace(/[_\s]+/g, '');
+          const targets = [
+            normalize(`${effMonth}월${weekNo}주차`),
+            normalize(`${effYear}년${effMonth}월${weekNo}주차`),
+          ];
+          const found = files.find(f => {
+            const n = normalize(f);
+            return targets.some(t => n.includes(t));
+          });
+          if (found) matched = found;
+        } catch {}
+      }
+
+      if (!matched) {
+        jsonRes(res, 200, {
+          ok: false,
+          reason: 'no_last_week_file',
+          week_label: weekLabel,
+          period: periodStr,
+          business_name: business,
+          project_id: pid,
+        });
+        return;
+      }
+
+      const downloadUrl = `/api/file/download?path=${encodeURIComponent(`business-report/output/${pid}/${matched}`)}`;
+      jsonRes(res, 200, {
+        ok: true,
+        filename: matched,
+        download_url: downloadUrl,
+        week_label: weekLabel,
+        period: periodStr,
+        business_name: business,
+        project_id: pid,
+      });
+    } catch (err) {
+      jsonRes(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  /* POST /api/business-report/projects/{id}/test-connection — SR API 연결 테스트 */
+  {
+    const mmatch = req.method === 'POST' && url.pathname.match(/^\/api\/business-report\/projects\/([^/]+)\/test-connection$/);
+    if (mmatch) {
+      try {
+        const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+        if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+        const pid = decodeURIComponent(mmatch[1]);
+        const auth = loadBrAuth(userNN, pid);
+        if (!auth.SR_API_TOKEN || !auth.SR_TENANT || !auth.SR_BASE_URL) {
+          jsonRes(res, 400, { ok: false, error: '인증 정보 부족' }); return;
+        }
+        const testUrl = new URL(`/api/${auth.SR_TENANT}/sr?date_field=closed_at&from=2026-01-01&to=2026-01-02&limit=1`, auth.SR_BASE_URL);
+        const result = await new Promise((resolve) => {
+          const options = {
+            hostname: testUrl.hostname,
+            path: testUrl.pathname + testUrl.search,
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${auth.SR_API_TOKEN}`, 'Accept': 'application/json' },
+            timeout: 10_000,
+          };
+          const req2 = https.request(options, (resp) => {
+            let buf = '';
+            resp.on('data', c => buf += c);
+            resp.on('end', () => resolve({ status: resp.statusCode, body: buf }));
+          });
+          req2.on('error', err => resolve({ status: 599, body: err.message }));
+          req2.on('timeout', () => { req2.destroy(); resolve({ status: 598, body: 'timeout' }); });
+          req2.end();
+        });
+        jsonRes(res, 200, {
+          ok: result.status === 200,
+          http_status: result.status,
+          detail: result.status === 200 ? '연결 성공' : (result.body || '').slice(0, 200),
+        });
+      } catch (err) {
+        jsonRes(res, 500, { ok: false, error: err.message });
+      }
+      return;
+    }
+  }
+
   /* GET /api/brief — 오늘 컨텍스트 집계 (다음 미팅 + 미답 메일).
      컨테이너 IP 기반 resolveUserNN. 60초 캐시. 부분 실패는 silent. */
   if (req.method === 'GET' && url.pathname === '/api/brief') {
@@ -2954,7 +4040,20 @@ const server = http.createServer(async (req, res) => {
   // ============ FILE DOWNLOAD ============
   if (req.method === 'GET' && url.pathname === '/api/file/download') {
     try {
-      const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      /* 브라우저 다운로드: 여러 소스에서 userNN 찾아옴 (에이전트가 만든 URL param 무시).
+         우선순위: 1) 세션 쿠키의 userNN  2) gateway_token 쿠키 (tc-userNN)  3) URL param  4) 컨테이너 IP */
+      let userNN = null;
+      const auth = getAuthSession(req);
+      if (auth?.userNN) userNN = auth.userNN;
+      if (!userNN) {
+        const cookies = parseCookies(req);
+        const gwToken = cookies.gateway_token || cookies.token || '';
+        const m = gwToken.match(/user(\d+)/i);
+        if (m) userNN = String(m[1]).padStart(2, '0');
+      }
+      if (!userNN) {
+        userNN = resolveUserNN(req, url.searchParams.get('userNN'));
+      }
       const filePath = url.searchParams.get('path') || '';
       if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
       if (!filePath) { jsonRes(res, 400, { ok: false, error: 'path 필수' }); return; }
@@ -2977,13 +4076,22 @@ const server = http.createServer(async (req, res) => {
         '.pdf': 'application/pdf', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         '.png': 'image/png', '.jpg': 'image/jpeg', '.gif': 'image/gif',
+        '.hwp': 'application/x-hwp',
+        '.hwpx': 'application/vnd.hancom.hwpx',
       };
       const contentType = mimeTypes[ext] || 'application/octet-stream';
 
+      /* Chrome이 HTTP unknown binary 다운로드를 차단하는 문제 회피:
+         - 정확한 hwpx mime type 지정 (application/vnd.hancom.hwpx)
+         - X-Content-Type-Options: nosniff 로 mime sniffing 방지
+         - Content-Disposition의 ASCII fallback filename도 함께 제공 */
+      const asciiFilename = filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
       res.writeHead(200, {
         'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        'Content-Disposition': `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
         'Content-Length': stat.size,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
       });
       fs.createReadStream(resolved).pipe(res);
     } catch (err) {

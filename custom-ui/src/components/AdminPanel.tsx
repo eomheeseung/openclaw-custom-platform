@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Server, Activity, Settings, RefreshCw, UserPlus, UserMinus, RotateCcw, ChevronDown, ChevronRight, Cpu, HardDrive, Loader2, CheckCircle, XCircle, AlertTriangle, BarChart3, DollarSign } from 'lucide-react';
+import { Users, Server, Activity, Settings, RefreshCw, UserPlus, UserMinus, RotateCcw, ChevronDown, ChevronRight, Cpu, HardDrive, Loader2, CheckCircle, XCircle, AlertTriangle, BarChart3, DollarSign, Package } from 'lucide-react';
 
 interface UserSlot {
   slot: string;
@@ -99,7 +99,22 @@ export function AdminPanel() {
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [stats, setStats] = useState<ContainerStats[]>([]);
   const [config, setConfig] = useState<{ apiKeys: Record<string, boolean>; totalSlots: number; usersAssigned: number; activeSessions: number } | null>(null);
-  const [moonshotKeys, setMoonshotKeys] = useState<{ count: number; mode: string; keys: Array<{ label: string; masked: string; status: string; httpCode?: number; reason?: string | null }> } | null>(null);
+  const [moonshotKeys, setMoonshotKeys] = useState<{
+    count: number; mode: string;
+    keys: Array<{ label: string; masked: string; status: string; httpCode?: number; reason?: string | null }>;
+    /* Anthropic 은 잔액 조회 API 가 없어서 금액 대신 상태 + 분당 한도만 온다 */
+    anthropic?: {
+      masked: string; status: string; httpCode?: number; reason?: string | null;
+      orgId?: string | null; workspaceId?: string | null; users?: string[];
+      limits?: { requests: string; inputTokens: string | null; outputTokens: string | null } | null;
+      /* 최근 24h 컨테이너 로그에서 수집한 Anthropic 실패 이력 */
+      errors?: {
+        count: number; lastAt: string | null;
+        recent: Array<{ time: string | null; user: string; message: string; httpCode: string | null }>;
+        summary: Array<{ message: string; count: number }>;
+      } | null;
+    } | null;
+  } | null>(null);
   const [moonshotKeysLoading, setMoonshotKeysLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -113,6 +128,13 @@ export function AdminPanel() {
   // Expanded slot details
   const [expandedSlot, setExpandedSlot] = useState<string | null>(null);
   const [slotAgents, setSlotAgents] = useState<Record<string, { agents: SlotAgent[]; model: string; discordAccounts: string[] }>>({});
+
+  // Feature enrollment
+  interface Feature { id: string; name: string; emoji: string; description: string; current_version?: string }
+  const [features, setFeatures] = useState<Feature[]>([]);
+  const [enrolledMap, setEnrolledMap] = useState<Record<string, string[]>>({});
+  const [featureBusy, setFeatureBusy] = useState<string>(''); // "featureId:userNN" 형식
+  const [featureConfirm, setFeatureConfirm] = useState<{ action: 'enroll' | 'unenroll'; feature: Feature; userNN: string; name: string | null } | null>(null);
 
   // Usage tracking
   const [usage, setUsage] = useState<UsageResponse | null>(null);
@@ -133,6 +155,42 @@ export function AdminPanel() {
       if (d.ok) setSlots(d.slots);
     } catch { /* ignore */ }
   }, []);
+
+  const fetchFeatures = useCallback(async () => {
+    try {
+      const r = await fetch('/api/admin/features', { credentials: 'include' });
+      const d = await r.json();
+      if (d.ok) { setFeatures(d.features || []); setEnrolledMap(d.enrolled || {}); }
+    } catch { /* ignore */ }
+  }, []);
+
+  const executeFeatureAction = async () => {
+    if (!featureConfirm) return;
+    const { action, feature, userNN } = featureConfirm;
+    const key = `${feature.id}:${userNN}`;
+    setFeatureBusy(key);
+    try {
+      const endpoint = action === 'enroll' ? 'enroll' : 'unenroll';
+      const r = await fetch(`/api/admin/features/${endpoint}`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ featureId: feature.id, userNN }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        showMsg(`${feature.name} · user${userNN} ${action === 'enroll' ? '활성화' : '회수'} 완료`);
+        await fetchFeatures();
+        if (expandedSlot === userNN) fetchSlotAgents(userNN);
+      } else {
+        showMsg(`실패: ${d.error || d.log || 'Unknown'}`, true);
+      }
+    } catch (e) {
+      showMsg(`실패: ${(e as Error).message}`, true);
+    } finally {
+      setFeatureBusy('');
+      setFeatureConfirm(null);
+    }
+  };
 
   const fetchContainers = useCallback(async () => {
     try {
@@ -207,7 +265,7 @@ export function AdminPanel() {
 
   const refreshAll = async () => {
     setLoading(true);
-    await Promise.all([fetchUsers(), fetchContainers(), fetchConfig()]);
+    await Promise.all([fetchUsers(), fetchContainers(), fetchConfig(), fetchFeatures()]);
     setLoading(false);
   };
 
@@ -310,7 +368,7 @@ export function AdminPanel() {
           </div>
           <div className="bg-card border border-border-color rounded-xl p-4">
             <p className="text-xs text-text-secondary mb-1">실행 컨테이너</p>
-            <p className="text-2xl font-bold text-text-primary">{containers.filter(c => c.state === 'running').length}<span className="text-sm text-text-secondary font-normal"> / 15</span></p>
+            <p className="text-2xl font-bold text-text-primary">{containers.filter(c => c.state === 'running').length}<span className="text-sm text-text-secondary font-normal"> / {config?.totalSlots ?? 16}</span></p>
           </div>
           <div className="bg-card border border-border-color rounded-xl p-4">
             <p className="text-xs text-text-secondary mb-1">API 키</p>
@@ -342,7 +400,7 @@ export function AdminPanel() {
       {tab === 'users' && (
         <div className="bg-card border border-border-color rounded-xl overflow-hidden">
           <div className="flex items-center justify-between p-4 border-b border-border-color">
-            <h3 className="font-semibold text-text-primary flex items-center gap-2"><Users className="w-4 h-4" /> 유저 슬롯 (15)</h3>
+            <h3 className="font-semibold text-text-primary flex items-center gap-2"><Users className="w-4 h-4" /> 유저 슬롯 ({config?.totalSlots ?? 16})</h3>
             <button onClick={() => setShowAssign(!showAssign)} className="px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white rounded-lg flex items-center gap-1">
               <UserPlus className="w-3 h-3" /> 유저 할당
             </button>
@@ -420,7 +478,7 @@ export function AdminPanel() {
 
                   {/* Expanded details */}
                   {expanded && agentInfo && (
-                    <div className="px-14 pb-3 space-y-2">
+                    <div className="px-14 pb-4 space-y-3">
                       <div className="flex items-center gap-2 text-xs text-text-secondary">
                         <Cpu className="w-3 h-3" /> 모델: <span className="text-text-primary">{agentInfo.model}</span>
                       </div>
@@ -434,6 +492,49 @@ export function AdminPanel() {
                       {agentInfo.discordAccounts.length > 0 && (
                         <div className="text-xs text-text-secondary">
                           Discord: {agentInfo.discordAccounts.join(', ')}
+                        </div>
+                      )}
+
+                      {/* 기능 배포 관리 */}
+                      {features.length > 0 && (
+                        <div className="mt-3 border border-border-color rounded-lg bg-card/50 p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-text-secondary uppercase tracking-wide">
+                              <Package className="w-3 h-3" /> 기능 배포 관리
+                            </div>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-background border border-border-color text-text-secondary">
+                              {features.filter(f => (enrolledMap[f.id] || []).includes(s.slot)).length} / {features.length} 활성화
+                            </span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {features.map(f => {
+                              const enrolled = (enrolledMap[f.id] || []).includes(s.slot);
+                              const busy = featureBusy === `${f.id}:${s.slot}`;
+                              return (
+                                <div key={f.id} className={`flex items-center gap-2.5 p-2 rounded-lg border ${enrolled ? 'border-accent/30 bg-accent/[0.03]' : 'border-border-color bg-background'}`}>
+                                  <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                                    <input type="checkbox" checked={enrolled} disabled={busy}
+                                      onChange={() => setFeatureConfirm({ action: enrolled ? 'unenroll' : 'enroll', feature: f, userNN: s.slot, name: s.name })}
+                                      className="sr-only peer" />
+                                    <div className="w-9 h-5 bg-gray-300 rounded-full peer peer-checked:bg-accent transition-colors relative">
+                                      <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${enrolled ? 'translate-x-4' : ''}`} />
+                                    </div>
+                                  </label>
+                                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent/10 to-purple-500/10 flex items-center justify-center text-sm flex-shrink-0">{f.emoji}</div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                                      {f.name}
+                                      {f.current_version && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-semibold">{f.current_version}</span>}
+                                    </div>
+                                    <div className="text-[11px] text-text-secondary truncate">{f.description}</div>
+                                  </div>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${busy ? 'bg-amber-500/15 text-amber-600' : enrolled ? 'bg-emerald-500/15 text-emerald-600' : 'bg-gray-500/15 text-text-secondary'}`}>
+                                    {busy ? '처리 중...' : enrolled ? '활성' : '미활성'}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -454,7 +555,7 @@ export function AdminPanel() {
             </button>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {Array.from({ length: 15 }, (_, i) => {
+            {Array.from({ length: config?.totalSlots ?? 16 }, (_, i) => {
               const slot = String(i + 1).padStart(2, '0');
               const container = getContainerState(slot);
               const stat = getContainerStats(slot);
@@ -570,7 +671,7 @@ export function AdminPanel() {
                   <div className="col-span-2 text-right">누적 비용</div>
                   <div className="col-span-3" title="전체 비용 중 이 사용자가 차지하는 점유율 (모든 사용자 합 = 100%)">점유율</div>
                 </div>
-                {Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0')).map(nn => {
+                {Array.from({ length: config?.totalSlots ?? 16 }, (_, i) => String(i + 1).padStart(2, '0')).map(nn => {
                   const u = usage.users[nn];
                   const email = usage.slotEmails[nn] || '-';
                   const name = usage.slotNames?.[nn];
@@ -766,6 +867,127 @@ export function AdminPanel() {
             )}
           </div>
 
+          {/* Anthropic 키 상태 카드
+              ⚠ Moonshot 과 달리 잔액 조회 API 가 없다 → 금액 표시 불가, 살아있는지 + 분당 한도만.
+                크레딧 소진이 429 가 아니라 400 으로 오므로 credit_exhausted 를 따로 표시. */}
+          {moonshotKeys?.anthropic && (() => {
+            const a = moonshotKeys.anthropic!;
+            const tone =
+              a.status === 'live' ? 'text-green-400 border-green-400/30 bg-green-400/5' :
+              a.status === 'credit_exhausted' ? 'text-red-400 border-red-400/30 bg-red-400/5' :
+              a.status === 'auth_error' ? 'text-red-400 border-red-400/30 bg-red-400/5' :
+              a.status === 'rate_limit' ? 'text-yellow-400 border-yellow-400/30 bg-yellow-400/5' :
+              'text-text-secondary border-border-color bg-background';
+            const label =
+              a.status === 'live' ? '✅ 정상' :
+              a.status === 'credit_exhausted' ? '💳 크레딧 소진' :
+              a.status === 'auth_error' ? '❌ 인증 실패' :
+              a.status === 'rate_limit' ? '⚠️ 분당 한도 초과' :
+              a.status === 'timeout' ? '⏱ 응답 없음' :
+              a.status === 'network_error' ? '🔌 네트워크 오류' :
+              a.status;
+            return (
+              <div className="bg-card border border-border-color rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                    <Settings className="w-4 h-4" /> Anthropic (Claude)
+                  </h3>
+                  <button onClick={fetchMoonshotKeys} disabled={moonshotKeysLoading}
+                    className="text-xs px-2 py-1 rounded border border-border-color hover:bg-background transition-colors disabled:opacity-50">
+                    {moonshotKeysLoading ? '확인 중...' : '새로고침'}
+                  </button>
+                </div>
+                <div className={`p-4 rounded-lg border ${tone}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-semibold text-text-primary uppercase">API KEY</span>
+                    <span className="text-xs">{label}</span>
+                  </div>
+                  <p className="text-xs font-mono text-text-secondary">{a.masked}</p>
+                  {a.reason && <p className="text-[10px] mt-1 text-text-secondary/80 break-all">{a.reason}</p>}
+                </div>
+                <div className="mt-3 space-y-1 text-xs text-text-secondary">
+                  {a.orgId && (
+                    <p>조직 ID <span className="font-mono text-[10px] text-text-primary">{a.orgId}</span></p>
+                  )}
+                  {a.workspaceId && (
+                    <p>워크스페이스 <span className="font-mono text-[10px] text-text-primary">{a.workspaceId}</span></p>
+                  )}
+                  {a.limits && (
+                    <p>분당 한도 — 요청 {Number(a.limits.requests).toLocaleString()}
+                      {a.limits.inputTokens && ` · 입력 ${Number(a.limits.inputTokens).toLocaleString()}`}
+                      {a.limits.outputTokens && ` · 출력 ${Number(a.limits.outputTokens).toLocaleString()}`} 토큰</p>
+                  )}
+                  <p>
+                    사용 중 —{' '}
+                    {a.users && a.users.length > 0
+                      ? <strong className="text-text-primary">{a.users.join(', ')}</strong>
+                      : '없음 (primary 로 지정된 사용자 없음)'}
+                  </p>
+                  <p className="text-text-secondary/70">
+                    Anthropic 은 잔액 조회 API 가 없어 금액은 표시할 수 없습니다. 크레딧이 떨어지면 위 상태가 <strong>크레딧 소진</strong>으로 바뀝니다.
+                  </p>
+                </div>
+
+                {/* 최근 24h 실패 이력 — ping 은 현재 시점만 보므로 간헐적 실패는 여기서만 보인다 */}
+                <div className="mt-4 pt-3 border-t border-border-color">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-text-primary">최근 24시간 API 오류</span>
+                    <span className={`text-xs ${a.errors && a.errors.count > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {a.errors ? `${a.errors.count}건` : '수집 불가'}
+                      {a.errors?.lastAt && ` · 마지막 ${a.errors.lastAt.replace('T', ' ')}`}
+                    </span>
+                  </div>
+
+                  {a.errors && a.errors.count > 0 ? (
+                    <>
+                      {a.errors.summary.length > 0 && (
+                        <div className="mb-2 space-y-1">
+                          {a.errors.summary.map((s, i) => (
+                            <div key={i} className="flex items-start gap-2 text-[11px]">
+                              <span className="text-red-400 font-semibold flex-shrink-0">{s.count}회</span>
+                              <span className="text-text-secondary break-all">{s.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="max-h-48 overflow-y-auto rounded border border-border-color bg-background">
+                        <table className="w-full text-[10px]">
+                          <thead className="sticky top-0 bg-background">
+                            <tr className="text-text-secondary">
+                              <th className="text-left p-1.5 font-semibold">시각</th>
+                              <th className="text-left p-1.5 font-semibold">사용자</th>
+                              <th className="text-left p-1.5 font-semibold">코드</th>
+                              <th className="text-left p-1.5 font-semibold">메시지</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {a.errors.recent.map((e, i) => (
+                              <tr key={i} className="border-t border-border-color/50">
+                                <td className="p-1.5 font-mono text-text-secondary whitespace-nowrap">
+                                  {e.time ? e.time.replace('T', ' ') : '-'}
+                                </td>
+                                <td className="p-1.5 text-text-primary whitespace-nowrap">{e.user}</td>
+                                <td className="p-1.5 font-mono text-text-secondary">{e.httpCode || '-'}</td>
+                                <td className="p-1.5 text-text-secondary break-all">{e.message}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[10px] text-text-secondary/70 mt-1">
+                        최대 15건까지 표시 · 사용자별 컨테이너 로그에서 수집
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-text-secondary/70">
+                      {a.errors ? '오류 없음 — 정상 동작 중입니다.' : '로그를 읽지 못했습니다.'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="bg-card border border-border-color rounded-xl p-5">
             <h3 className="font-semibold text-text-primary mb-4 flex items-center gap-2"><Settings className="w-4 h-4" /> API 키 상태</h3>
             <div className="space-y-2">
@@ -794,6 +1016,51 @@ export function AdminPanel() {
                 <p className="text-3xl font-bold text-text-primary">{config.activeSessions}</p>
                 <p className="text-xs text-text-secondary mt-1">활성 세션</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 기능 활성화/회수 확인 다이얼로그 */}
+      {featureConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !featureBusy && setFeatureConfirm(null)}>
+          <div className="bg-card border border-border-color rounded-2xl w-full max-w-md p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className={`text-sm font-bold mb-2 ${featureConfirm.action === 'enroll' ? 'text-accent' : 'text-red-500'}`}>
+              {featureConfirm.feature.emoji} {featureConfirm.feature.name} {featureConfirm.action === 'enroll' ? '활성화' : '회수'}
+            </div>
+            <div className="text-sm text-text-primary mb-3">
+              <b>user{featureConfirm.userNN} ({featureConfirm.name || '?'})</b> 에게 {featureConfirm.feature.name} 기능을 {featureConfirm.action === 'enroll' ? '활성화' : '회수'}합니다.
+            </div>
+            {featureConfirm.action === 'enroll' ? (
+              <div className="bg-background border border-border-color rounded-lg p-3 text-xs text-text-secondary mb-3">
+                <div className="font-semibold text-text-primary mb-1">배포 내용:</div>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  <li>사이드바에 {featureConfirm.feature.emoji} {featureConfirm.feature.name} 에이전트 추가</li>
+                  <li>비서 위임 대상에 등록</li>
+                  <li>중앙 SOUL 배포 ({featureConfirm.feature.current_version || 'latest'})</li>
+                  <li>외부 연동에서 관련 데이터 등록 가능</li>
+                </ul>
+                <div className="mt-2 text-[10px]">⏱ 다운타임 없음 (openclaw 런타임 자동 반영)</div>
+              </div>
+            ) : (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs text-text-primary mb-3">
+                <div className="font-semibold text-red-500 mb-1">회수 영향:</div>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  <li>사이드바에서 즉시 사라짐</li>
+                  <li>비서 위임 대상 제거</li>
+                  <li>등록 데이터는 <code>business-report.archived-*</code> 로 이동 (복원 가능)</li>
+                </ul>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button className="px-3 py-1.5 text-xs border border-border-color rounded-lg text-text-primary hover:bg-background" disabled={!!featureBusy} onClick={() => setFeatureConfirm(null)}>취소</button>
+              <button
+                className={`px-4 py-1.5 text-xs text-white font-semibold rounded-lg disabled:opacity-50 ${featureConfirm.action === 'enroll' ? 'bg-accent hover:bg-accent-hover' : 'bg-red-500 hover:bg-red-600'}`}
+                onClick={executeFeatureAction}
+                disabled={!!featureBusy}
+              >
+                {featureBusy ? '처리 중...' : (featureConfirm.action === 'enroll' ? '활성화' : '회수')}
+              </button>
             </div>
           </div>
         </div>
