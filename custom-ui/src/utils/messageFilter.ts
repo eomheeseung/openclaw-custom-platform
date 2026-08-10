@@ -76,10 +76,26 @@ const BOOTSTRAP_LEAK_MARKERS: readonly string[] = [
   '## 메모리 (이전 대화',
 ];
 
+/* 인터랙티브 카드 fence — 이 안의 JSON은 raw dump 아님 (의도된 렌더링).
+   biz-picker/sr-table/... JSON에 "projects":[{ 같은 raw 마커가 포함될 수 있어서
+   먼저 예외 처리. */
+const CARD_FENCE_MARKERS: readonly string[] = [
+  '```biz-picker',
+  '```sr-table',
+  '```week-picker',
+  '```grouping-editor',
+  '```draft-card',
+  '```download-card',
+];
+
 /* 본문에 RAG 결과·exec 래퍼·시스템 덤프 마커가 하나라도 있으면 raw 덤프.
    한글 포함 여부와 무관하게 동작. */
 export function containsRawDumpMarker(content: string): boolean {
   if (!content) return false;
+  /* 카드 fence가 있으면 raw 덤프로 취급 X */
+  for (const m of CARD_FENCE_MARKERS) {
+    if (content.includes(m)) return false;
+  }
   for (const m of RAW_TOOL_MARKERS) {
     if (content.includes(m)) return true;
   }
@@ -87,6 +103,27 @@ export function containsRawDumpMarker(content: string): boolean {
     if (content.includes(m)) return true;
   }
   return false;
+}
+
+/* 웹챗 사용자 메시지 앞에 OpenClaw가 붙이는 래퍼([Bootstrap pending] 안내문 +
+   Sender (untrusted metadata) JSON) 를 벗기고 실제 발화만 남긴다.
+   ⚠ MessageList 의 렌더 경로도 이 함수를 쓴다 — 로직을 여기 한 곳에만 둘 것.
+   래퍼를 못 벗기면(타임스탬프 없음) 원문을 그대로 돌려주므로, 호출부에서
+   raw 마커 검사에 걸려 자연히 숨겨진다. */
+export function stripUserWrapper(content: string): string {
+  if (!content) return content;
+  let out = content;
+  const TS = /\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+GMT[+-]\d+\]\s*/;
+  if (out.startsWith('[Bootstrap pending]')) {
+    const re = new RegExp(TS.source, 'g');
+    let last: RegExpExecArray | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(out)) !== null) last = m;
+    if (last) out = out.slice(last.index + last[0].length);
+  } else {
+    out = out.replace(new RegExp('^' + TS.source), '');
+  }
+  return out.trim();
 }
 
 /* 메시지 본문 본체로 사용자한테 보여줄 가치 있는지 판정. */
@@ -101,17 +138,20 @@ export function shouldHideMessage(role: string, rawContent: string): boolean {
 
   /* 1. 사용자 메시지: 일반 raw 마커 + OpenClaw가 사용자 role로 위장해 보내는 시스템 인계 패턴 모두 hide */
   if (role === 'user') {
-    if (containsRawDumpMarker(c)) return true;
+    /* 시스템이 user role 로 위장해 보내는 인계 메시지 — 래퍼 벗기기 전 원문 기준 판정 */
     if (/^HEARTBEAT(_[A-Z]+)?\b/i.test(c)) return true;
-    /* OpenClaw 시스템 인계 메시지 패턴 (user role로 위장됨) */
     if (/^System\s*\(untrusted\)\s*:/i.test(c)) return true;
     if (/An async command you ran earlier has completed/i.test(c)) return true;
     if (/Do not relay it to the user unless explicitly requested/i.test(c)) return true;
     if (/Exec completed \(kind-/i.test(c)) return true;
-    if (/^\[Bootstrap pending\]/i.test(c) && !/\n\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\]]+\]\s*\S/.test(c)) {
-      /* BOOTSTRAP pending 뒤에 진짜 사용자 발화([Day YYYY-...] 문장)가 없으면 hide */
-      return true;
-    }
+
+    /* ⚠ raw 마커 검사는 반드시 래퍼를 벗긴 뒤에 한다.
+       OpenClaw 는 웹챗 사용자 발화 앞에 'Sender (untrusted metadata)' 블록을 항상 붙이는데,
+       그 문자열이 EXEC_WRAPPER_MARKERS 에 있어서 원문 기준으로 검사하면
+       사용자 메시지가 예외 없이 전부 숨겨진다 (히스토리 재로드 시 질문만 사라지던 원인). */
+    const body = stripUserWrapper(c);
+    if (!body) return true;                       // 래퍼만 있고 실제 발화 없음
+    if (containsRawDumpMarker(body)) return true; // 벗긴 뒤에도 raw 덤프면 숨김
     return false;
   }
 

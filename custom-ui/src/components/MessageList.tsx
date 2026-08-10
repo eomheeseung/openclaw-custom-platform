@@ -1,11 +1,12 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeRaw from 'rehype-raw';
-import { User, Bot, Loader2, Copy, Download, Check, CheckCircle2 } from 'lucide-react';
+import { User, Bot, Loader2, Copy, Download, Check, CheckCircle2, Building2, AlertTriangle } from 'lucide-react';
 import type { Message, Agent } from '../types';
-import { shouldHideMessage, cleanDisplayContent } from '../utils/messageFilter';
+import { shouldHideMessage, cleanDisplayContent, stripUserWrapper } from '../utils/messageFilter';
+import { SrTableCard, WeekPickerCard, GroupingEditorCard, DraftCard, DownloadCard, parseSrBaseline, parseGroupingConfirm, type SrBaselineItem, type ConfirmedGroup } from './MessageCards';
 
 /* 사용자 메시지에서 [파일: xxx] 라벨 다음의 inline 텍스트를 라벨만 남기고 제거 */
 function trimFileContent(content: string): string {
@@ -21,24 +22,9 @@ function stripCronPrefix(content: string): string {
   return out.replace(/^\n+/, '').trimEnd();
 }
 
-/* OpenClaw [Bootstrap pending] 블록 + Sender 메타 + timestamp prefix 제거,
-   진짜 사용자 본문만 남김 */
-function stripBootstrapPending(content: string): string {
-  if (!content) return content;
-  let out = content;
-  // [Bootstrap pending] 블록과 그 안내문 제거
-  if (out.startsWith('[Bootstrap pending]')) {
-    const re = /\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+GMT[+-]\d+\]\s*/g;
-    let lastMatch: RegExpExecArray | null = null;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(out)) !== null) lastMatch = m;
-    if (lastMatch) out = out.slice(lastMatch.index + lastMatch[0].length);
-  } else {
-    // [Bootstrap pending] 없이도 leading timestamp prefix 한 개는 정리
-    out = out.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+GMT[+-]\d+\]\s*/, '');
-  }
-  return out.trim();
-}
+/* 래퍼 제거는 messageFilter.stripUserWrapper 로 단일화 (숨김 판정과 같은 로직을 써야
+   "필터는 통과했는데 화면엔 래퍼가 보이는" 불일치가 안 생긴다) */
+const stripBootstrapPending = stripUserWrapper;
 
 function ElapsedTimer({ startTime }: { startTime: Date }) {
   const [elapsed, setElapsed] = useState(0);
@@ -69,9 +55,153 @@ function useCopy() {
 interface MessageListProps {
   messages: Message[];
   agents?: Agent[];
+  onSendMessage?: (text: string) => void;
+  onPrefill?: (text: string) => void;
+  /* 프론트 처리 인텐트 (biz-picker intent 매칭). 값 있으면 onSendMessage 스킵. */
+  onIntentPick?: (intent: string, project: BizPickerProject) => void;
 }
 
-export function MessageList({ messages, agents = [] }: MessageListProps) {
+interface BizPickerProject {
+  id: string;
+  name: string;
+  org?: string;
+  auth_ok?: boolean;
+  archived?: boolean;
+  last_used?: string;
+  note?: string;
+}
+
+interface BizPickerData {
+  prompt?: string;
+  intent?: string;
+  projects: BizPickerProject[];
+  hint?: string;
+}
+
+/* 프론트 처리 인텐트 목록 (biz-picker.intent 이 이 중 하나면 onSelect(LLM 전송) 스킵하고 onIntentPick 호출) */
+const FRONTEND_BIZ_INTENTS = new Set(['last-week-file']);
+
+const BizPickerCard = memo(function BizPickerCard({
+  raw,
+  onSelect,
+  onIntentPick,
+}: {
+  raw: string;
+  onSelect?: (text: string) => void;
+  onIntentPick?: (intent: string, project: BizPickerProject) => void;
+}) {
+  let data: BizPickerData | null = null;
+  try { data = JSON.parse(raw); } catch { /* invalid JSON */ }
+  if (!data || !Array.isArray(data.projects) || data.projects.length === 0) {
+    /* 스트리밍 중 partial일 가능성 → 조용히 로딩 표시 */
+    if (!raw.trim().endsWith('}')) {
+      return (
+        <div className="my-2 p-3 rounded-lg border border-border-color bg-background text-xs text-text-secondary italic">
+          biz-picker 카드 로딩 중...
+        </div>
+      );
+    }
+    return (
+      <div className="my-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-500 font-mono">
+        biz-picker: 데이터 파싱 실패 또는 사업 없음
+      </div>
+    );
+  }
+  const pick = (p: BizPickerProject) => {
+    /* 프론트 처리 인텐트면 LLM 전송 스킵 */
+    if (data!.intent && FRONTEND_BIZ_INTENTS.has(data!.intent) && onIntentPick) {
+      onIntentPick(data!.intent, p);
+      return;
+    }
+    if (!onSelect) return;
+    const intent = data!.intent ? ` (${data!.intent})` : '';
+    onSelect(`${p.name} 사업으로 진행해${intent}`);
+  };
+
+  return (
+    <div className="my-3 rounded-2xl border border-accent/25 bg-gradient-to-br from-accent/[0.04] to-purple-500/[0.04] p-4 max-w-2xl">
+      <div className="flex items-start gap-2 mb-3">
+        <Building2 className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" />
+        <div className="text-sm font-bold text-text-primary">
+          {data.prompt || '어느 사업 주간보고를 만들까요?'}
+        </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        {data.projects.map((p) => {
+          const disabled = !!p.archived;
+          return (
+            <button
+              key={p.id}
+              onClick={() => !disabled && pick(p)}
+              disabled={disabled}
+              className={`text-left flex gap-3 items-center rounded-xl border px-3 py-2.5 transition-all ${
+                disabled
+                  ? 'border-border-color bg-background opacity-50 cursor-not-allowed'
+                  : 'border-accent/40 bg-white hover:border-accent hover:shadow-md'
+              }`}
+            >
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent/10 to-purple-500/10 flex items-center justify-center flex-shrink-0">
+                <Building2 className="w-4 h-4 text-accent" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-text-primary truncate">{p.name}</div>
+                <div className="text-xs text-text-secondary mt-0.5 flex items-center gap-1.5 flex-wrap">
+                  {p.org && <span>{p.org}</span>}
+                  {p.last_used && <span>· 마지막 사용: {p.last_used}</span>}
+                  {p.archived && <span>· 아카이브</span>}
+                  {p.auth_ok === false && (
+                    <span className="inline-flex items-center gap-0.5 text-amber-600 font-semibold">
+                      <AlertTriangle className="w-3 h-3" />
+                      SR 인증 필요
+                    </span>
+                  )}
+                  {p.note && <span>· {p.note}</span>}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {data.hint && (
+        <div className="text-xs text-text-secondary mt-3 pt-3 border-t border-border-color/50">
+          {data.hint}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/* draft-card 검증 기준: 그 카드보다 앞에 있는 가장 가까운 sr-table.
+   "가장 가까운" 이어야 여러 주차를 한 세션에서 만들어도 해당 라운드 것과 대조됨.
+   못 찾으면 null → 검증 생략 (컨텍스트 압축으로 잘렸거나 sr-table 없는 흐름) */
+function findSrBaselineBefore(msgs: Message[], idx: number): SrBaselineItem[] | null {
+  for (let i = idx - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role !== 'assistant' || typeof m.content !== 'string') continue;
+    const fence = m.content.lastIndexOf('```sr-table');
+    if (fence === -1) continue;
+    const body = m.content.slice(fence + '```sr-table'.length);
+    const end = body.indexOf('```');
+    return parseSrBaseline((end === -1 ? body : body.slice(0, end)).trim());
+  }
+  return null;
+}
+
+/* draft-card 앞의 가장 가까운 "그룹핑 확정" 사용자 메시지.
+   GroupingEditorCard.confirm() 이 보낸 【확정된 그룹】 블록을 파싱해서
+   work_items 작업완료 행의 sr_no 표시 + 그룹 통째 누락 검증에 씀.
+   ⚠ 조립 형식은 MessageCards 의 GroupingEditorCard.confirm() 에 있음 — 같이 고칠 것 */
+function findGroupingConfirmBefore(msgs: Message[], idx: number): ConfirmedGroup[] | null {
+  for (let i = idx - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role !== 'user' || typeof m.content !== 'string') continue;
+    if (!m.content.includes('【확정된 그룹】')) continue;
+    return parseGroupingConfirm(m.content);
+  }
+  return null;
+}
+
+export function MessageList({ messages, agents = [], onSendMessage, onPrefill, onIntentPick }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -139,6 +269,7 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
       ref={scrollRef}
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto scrollbar-thin px-6 py-5 space-y-5"
+      style={{ overflowAnchor: 'none' }}
     >
       {messages.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-text-secondary">
@@ -270,11 +401,24 @@ export function MessageList({ messages, agents = [] }: MessageListProps) {
                           remarkPlugins={[remarkGfm]}
                           rehypePlugins={[rehypeHighlight, rehypeRaw]}
                           components={{
-                            pre: ({ children }) => (
-                              <pre className="bg-[#f5f4f0] border border-[#e8e6e0] rounded-lg p-3 overflow-x-auto my-2 text-sm">
-                                {children}
-                              </pre>
-                            ),
+                            pre: ({ children }) => {
+                              const child = children as any;
+                              const cls: string = child?.props?.className || '';
+                              if (typeof cls === 'string') {
+                                const raw = String(child.props.children || '').trim();
+                                if (cls.includes('language-biz-picker'))       return <BizPickerCard raw={raw} onSelect={onSendMessage} onIntentPick={onIntentPick} />;
+                                if (cls.includes('language-sr-table'))         return <SrTableCard raw={raw} />;
+                                if (cls.includes('language-week-picker'))      return <WeekPickerCard raw={raw} onSelect={onSendMessage} />;
+                                if (cls.includes('language-grouping-editor')) return <GroupingEditorCard raw={raw} onSelect={onSendMessage} messageId={message.id} />;
+                                if (cls.includes('language-draft-card'))       return <DraftCard raw={raw} onSelect={onSendMessage} onPrefill={onPrefill} srBaseline={findSrBaselineBefore(filtered, idx)} confirmedGroups={findGroupingConfirmBefore(filtered, idx)} />;
+                                if (cls.includes('language-download-card'))    return <DownloadCard raw={raw} onSelect={onSendMessage} />;
+                              }
+                              return (
+                                <pre className="bg-[#f5f4f0] border border-[#e8e6e0] rounded-lg p-3 overflow-x-auto my-2 text-sm">
+                                  {children}
+                                </pre>
+                              );
+                            },
                             code: ({ children, className }) => {
                               return !className ? (
                                 <code className="bg-accent/[0.07] text-accent px-1.5 py-0.5 rounded text-sm font-mono">
