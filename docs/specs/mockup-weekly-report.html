@@ -1,0 +1,789 @@
+<meta charset="utf-8">
+<title>업무보고 개편 · UI 흐름 목업</title>
+<style>
+:root{
+  --accent:#0F766E; --purple:#7c3aed; --bg:#faf8f2; --card:#fff;
+  --border:#e5e2d9; --text:#1f2937; --muted:#6b7280;
+  --amber:#f59e0b; --amber-bg:#fef3c7; --rose:#e11d48; --emerald:#059669; --blue:#3b82f6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#eeece6;color:var(--text);line-height:1.6;font-size:14px;
+  font-family:'Pretendard','Noto Sans KR','Malgun Gothic',ui-sans-serif,system-ui,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:26px;font-weight:800;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 22px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);
+  background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:26px}
+.legend b{color:var(--accent)}
+
+.step{background:var(--card);border:1px solid var(--border);border-radius:16px;
+  padding:20px 22px;margin-bottom:18px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.step > h2{font-size:16px;font-weight:800;margin:0 0 3px;display:flex;align-items:center;gap:9px}
+.step > h2 .n{width:24px;height:24px;border-radius:7px;background:var(--accent);color:#fff;
+  font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step > .desc{color:var(--muted);font-size:12.5px;margin:0 0 14px;padding-left:33px}
+.where{display:inline-block;font-size:10.5px;background:rgba(15,118,110,.09);color:var(--accent);
+  padding:2px 9px;border-radius:999px;font-weight:700;margin-left:6px}
+.where.sec{background:rgba(124,58,237,.1);color:var(--purple)}
+.where.cron{background:var(--amber-bg);color:#92400e}
+
+/* 채팅 목업 */
+.chat{background:var(--bg);border-radius:12px;padding:14px}
+.msg{display:flex;gap:9px;margin:9px 0;align-items:flex-start}
+.msg.u{flex-direction:row-reverse}
+.av{width:26px;height:26px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:12px;background:var(--card);border:1px solid var(--border)}
+.av.u{background:var(--accent);color:#fff;font-size:10px;font-weight:700}
+.bub{max-width:78%;padding:8px 12px;border-radius:12px;background:var(--card);
+  border:1px solid rgba(0,0,0,.05);font-size:12.5px}
+.bub.u{background:var(--accent);color:#fff}
+
+/* 카드 */
+.card{border:1px solid rgba(15,118,110,.28);background:var(--card);border-radius:13px;padding:13px;margin:8px 0}
+.card .hd{font-weight:800;font-size:12.5px;color:var(--accent);display:flex;align-items:center;gap:6px;margin-bottom:9px}
+.card .hint{font-size:10.5px;color:var(--muted);margin:-5px 0 9px}
+.opt{border:1px solid var(--border);border-radius:9px;padding:8px 11px;background:var(--bg);
+  margin-bottom:6px;display:flex;align-items:center;gap:9px}
+.opt.on{border-color:rgba(15,118,110,.45);background:rgba(15,118,110,.05)}
+.opt.off{opacity:.5}
+.opt .t{flex:1;font-size:12px;font-weight:600}
+.opt .s{font-size:10.5px;color:var(--muted);font-weight:400}
+.cbx{width:14px;height:14px;border:1.5px solid var(--accent);border-radius:3px;background:var(--accent);
+  color:#fff;font-size:10px;line-height:12px;text-align:center;flex-shrink:0}
+.cbx.no{background:#fff;color:transparent;border-color:#c9c6bd}
+.badge{font-size:9.5px;padding:1px 7px;border-radius:999px;font-weight:700;white-space:nowrap}
+.badge.need{background:var(--amber-bg);color:#92400e}
+.badge.ok{background:#d1fae5;color:#047857}
+.badge.new{background:#dbeafe;color:#1e40af}
+.btn{display:inline-block;padding:5px 13px;border-radius:8px;font-size:11.5px;font-weight:700;
+  border:1px solid var(--border);background:var(--card);color:#555}
+.btn.p{background:var(--accent);color:#fff;border-color:var(--accent)}
+.foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px}
+.savebox{font-size:10.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
+
+/* 설정 화면 */
+.panel{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px}
+.panel h4{margin:0 0 9px;font-size:12.5px;font-weight:800}
+.row{background:var(--card);border:1px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:7px}
+.row .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.row .nm{font-weight:700;font-size:12.5px}
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.chip{font-size:10.5px;border:1px solid var(--border);border-radius:999px;padding:2px 9px;background:var(--bg)}
+.chip.on{border-color:rgba(15,118,110,.45);background:rgba(15,118,110,.08);color:var(--accent);font-weight:700}
+.chip.dis{opacity:.45;text-decoration:line-through}
+
+/* 표 */
+table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}
+th{background:rgba(15,118,110,.07);color:var(--accent);text-align:left;padding:6px 9px;font-size:11px;font-weight:800}
+td{padding:6px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
+
+/* 흐름 요약 */
+.flow{display:flex;gap:7px;flex-wrap:wrap;align-items:stretch;margin:6px 0 0}
+.node{flex:1;min-width:96px;border:1.5px solid var(--border);border-radius:11px;background:var(--card);
+  padding:10px 8px;text-align:center}
+.node.you{border-color:var(--accent);background:rgba(15,118,110,.06)}
+.node.auto{border-style:dashed}
+.node .ic{font-size:17px;display:block;margin-bottom:4px}
+.node .t{font-size:11px;font-weight:700;display:block;line-height:1.35}
+.node .s{font-size:9.5px;color:var(--muted);display:block;margin-top:2px}
+.arw{display:flex;align-items:center;color:#c9c6bd;font-weight:800}
+
+.note{border-left:4px solid var(--blue);background:#dbeafe;padding:9px 13px;border-radius:0 7px 7px 0;
+  font-size:12px;margin:11px 0}
+.note.warn{border-color:var(--amber);background:var(--amber-bg);color:#92400e}
+.note.q{border-color:var(--purple);background:rgba(124,58,237,.07);color:#5b21b6}
+.note b{display:block;margin-bottom:2px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.two{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+<h1>업무보고 개편 · UI 흐름 목업</h1>
+<p class="sub">2026-08-06 · 설계 검토용 · 실제 화면 아님</p>
+
+<div class="legend">
+  <span><b>■</b> 초록 = 사용자가 조작</span>
+  <span><b>▨</b> 점선 = 자동 처리</span>
+  <span class="where">비서</span> 비서 에이전트가 담당
+  <span class="where sec">업무보고</span> 새 서브에이전트가 담당
+  <span class="where cron">cron</span> 자동 실행 경로
+</div>
+
+<!-- ═══════════ 0. 전체 흐름 ═══════════ -->
+<div class="step">
+  <h2><span class="n">0</span>전체 흐름</h2>
+  <p class="desc">사용자는 <b>비서 화면에만</b> 있다. 업무보고 에이전트는 뒤에서 돌고 사용자와 직접 말하지 않는다.</p>
+  <div class="flow">
+    <div class="node you"><span class="ic">🧑</span><span class="t">사용자</span><span class="s">비서에게 요청</span></div>
+    <div class="arw">›</div>
+    <div class="node"><span class="ic">🤵</span><span class="t">비서</span><span class="s">위임 · 카드 표시</span></div>
+    <div class="arw">⇅</div>
+    <div class="node auto"><span class="ic">📝</span><span class="t">업무보고</span><span class="s">백그라운드 집계</span></div>
+    <div class="arw">›</div>
+    <div class="node you"><span class="ic">✅</span><span class="t">초안 확인</span><span class="s">비서 화면에서</span></div>
+    <div class="arw">›</div>
+    <div class="node"><span class="ic">📧</span><span class="t">비서</span><span class="s">메일 발송</span></div>
+  </div>
+  <div class="note">
+    <b>카드는 전부 비서가 띄운다</b>
+    <code>sessions_spawn</code> 결과는 <b>자동으로 비서에게 반환</b>된다 (<code>Results auto-announce to your requester</code>).
+    사용자가 "전달" 같은 걸 누를 필요가 없다.
+    업무보고 에이전트는 <b>데이터를 만들어 넘기기만</b> 하고, 화면에 그리는 건 비서 몫이다.
+  </div>
+  <div class="note warn">
+    <b>사업 주간보고와 다른 점</b>
+    <code>business-report</code>는 사용자가 <b>그 에이전트 화면에 직접 들어가서</b> 대화한다 (biz-picker·draft-card를 자기가 띄움).
+    업무보고는 반대로 <b>비서 화면 안에서만</b> 동작한다 — 요구사항 5를 지키려면 이 방식이어야 한다.
+    대신 비서 쪽에 <b>"서브에이전트 결과를 카드로 재발행"</b> 규칙이 필요하다.
+  </div>
+</div>
+
+<!-- ═══════════ 1. 설정 ═══════════ -->
+<div class="step">
+  <h2><span class="n">1</span>담당 업무 등록 <span class="where">설정 화면</span></h2>
+  <p class="desc">외부 연동 › <b>담당 업무</b>. 한 번 등록해 두면 cron이 이 설정으로 자동 실행된다.</p>
+
+  <div class="note" style="margin-top:0">
+    <b>주기와 툴은 사람 단위 · 사업은 분류용</b>
+    주간보고는 한 사람이 <b>주 1회</b> 쓴다. 사업별로 주기를 두면 사업 3개인 사람은 보고를 3번 받게 된다.
+    툴도 마찬가지 — 사업마다 다르게 두면 설정이 사업 수만큼 늘어난다.
+    <b>담당 사업은 보고 항목을 <code>[사업명]</code>으로 묶는 분류 키로만</b> 쓴다.
+  </div>
+
+  <div class="two">
+    <div class="panel">
+      <h4>담당 사업 · 서비스 <span style="font-weight:400;color:var(--muted);font-size:11px">— 보고 항목 분류용</span></h4>
+      <div class="row">
+        <div class="top"><span class="nm">대한체육회 e진로지원센터</span><span class="badge ok">SR 연동</span></div>
+      </div>
+      <div class="row">
+        <div class="top"><span class="nm">금연서비스 통합정보시스템</span><span class="badge ok">SR 연동</span></div>
+      </div>
+      <div class="row">
+        <div class="top"><span class="nm">가상융합기술 아카데미</span><span class="badge ok">SR 연동</span></div>
+      </div>
+      <div class="row" style="border-style:dashed;text-align:center;color:var(--muted);font-size:11.5px">
+        + 담당 사업 · 서비스 추가
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5">
+        등록한 순서대로 보고서에 나온다.<br>
+        SR 미연동 서비스(내부 과제 등)도 이름만 등록해 분류에 쓸 수 있다.
+      </div>
+      <div class="note q" style="font-size:11px;margin-top:10px">
+        <b>결정 필요 (5.3)</b>
+        「공공사업 시스템」처럼 <b>별도 등록</b>할지, 기존 사업 등록에 담당자 필드를 더할지.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>사용 툴 <span style="font-weight:400;color:var(--muted);font-size:11px">— 전 사업 공통 · 1벌</span></h4>
+      <div class="opt on"><span class="cbx">✓</span><span class="t">두레이 <span class="s">— 내 담당 업무 · 완료 처리</span></span><span class="badge ok">연동됨</span></div>
+      <div class="opt on"><span class="cbx">✓</span><span class="t">Gmail <span class="s">— 주고받은 메일</span></span><span class="badge ok">연동됨</span></div>
+      <div class="opt on"><span class="cbx">✓</span><span class="t">구글 캘린더 <span class="s">— 회의 · 일정</span></span><span class="badge ok">연동됨</span></div>
+      <div class="opt"><span class="cbx no">✓</span><span class="t">구글 드라이브 <span class="s">— 산출물 · 문서</span></span><span class="badge ok">연동됨</span></div>
+      <div class="opt off"><span class="cbx no">✓</span><span class="t">GitHub <span class="s">— 커밋 · PR</span></span><span class="badge need">연동 필요</span></div>
+      <div class="opt off"><span class="cbx no">✓</span><span class="t">Figma <span class="s">— 디자인 작업</span></span><span class="badge new">개발 예정</span></div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:7px">
+        안 쓰는 툴은 꺼 두면 조회하지 않는다 — 그만큼 빨라진다.
+      </div>
+      <div class="note warn" style="margin:9px 0 0;font-size:11px">
+        <b>SR 시스템은 목록에 없다</b>
+        SR 조회는 <b>사업 단위</b>로만 되고 <b>처리 담당자 정보가 없다</b>
+        (목록 컬럼: sr_no·제목·<b>요청자</b>·상태·우선순위·일자·채널).
+        개인 업무보고에 넣으면 <b>같은 사업 다른 사람이 처리한 건까지 섞인다.</b>
+        → SR은 <b>사업 주간보고 🏢 전용</b>으로 둔다.
+      </div>
+
+      <h4 style="margin-top:14px">보고 주기 <span style="font-weight:400;color:var(--muted);font-size:11px">— 사람당 1개</span></h4>
+      <div class="row">
+        <div class="top">
+          <span class="nm">매주 목요일 17:00 초안</span>
+          <span class="badge ok">ON</span>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:3px">
+          금요일이 공휴일·연차면 수요일로 자동 조정<br>
+          담당 사업 <b>전체를 한 건</b>으로 묶어 초안 생성
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <b>미연동 툴은 고를 수 없다</b>
+    Dooray 미연동 상태에서 조회하면 에러가 아니라 <b>사용법 안내문</b>이 돌아오고, LLM은 이를 "결과 없음"으로 보고 항목을 조용히 누락시킨다.
+    그래서 연동 안 된 툴은 <b>비활성 + 「연동 필요」 배지</b>로 잠근다.
+  </div>
+</div>
+
+<!-- ═══════════ 2. 대화 진입 ═══════════ -->
+<div class="step">
+  <h2><span class="n">2</span>보고 요청 <span class="where">비서</span></h2>
+  <p class="desc">묻지 않고 <b>바로 초안까지</b> 간다. 조정은 초안을 본 뒤에 한다.</p>
+
+  <div class="two">
+    <div>
+      <div class="panel">
+        <h4>빠른 실행 버튼</h4>
+        <div style="display:flex;gap:7px;flex-wrap:wrap">
+          <div class="row" style="flex:1;min-width:130px;margin:0">
+            <div class="nm" style="font-size:12px">📝 이번 주 업무보고</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px">월~금 집계 → 초안</div>
+          </div>
+          <div class="row" style="flex:1;min-width:130px;margin:0">
+            <div class="nm" style="font-size:12px">🏢 사업 주간보고</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px">SR → HWPX 파일</div>
+          </div>
+        </div>
+      </div>
+      <div class="note warn" style="margin-top:11px">
+        <b>물어보면 안 된다</b>
+        담당 업무·툴을 매번 카드로 물으면 상호작용이 <b>4번</b>이 된다.
+        업계 기준은 <b>"첫 작성 2분 이내"</b> — 초기 마찰이 도입 실패의 주원인이다.
+        <b>기본값으로 바로 집계</b>하고, 조정은 초안을 본 뒤 필요할 때만.
+      </div>
+      <div class="note q" style="margin-top:0">
+        <b>결정 필요 (5.2)</b>
+        버튼을 <b>비서 화면에 노출</b>할지, 자연어만 쓸지.
+        버튼 방식이면 해석에 기대지 않아 혼선이 원천 차단된다.
+      </div>
+    </div>
+
+    <div class="chat">
+      <div class="msg u"><div class="av u">나</div><div class="bub u">이번 주 업무보고 초안 만들어줘</div></div>
+      <div class="msg"><div class="av">🤵</div><div class="bub">
+        담당 3개 사업 · 두레이 · Gmail · 캘린더 기준으로 집계할게요.<br>
+        <span style="font-size:11px;color:var(--muted)">잠시만요… 두레이 조회 중</span>
+      </div></div>
+      <div class="msg"><div class="av">🤵</div><div class="bub">
+        초안 나왔어요 👇<br>
+        <span style="font-size:11px;color:var(--muted)">특정 사업만 보거나 조회할 곳을 바꾸려면 말씀하세요</span>
+      </div></div>
+      <div style="text-align:center;font-size:10.5px;color:var(--muted);padding:6px 0">
+        ↓ 바로 <b>4단계 초안 카드</b>로
+      </div>
+      <div class="msg u"><div class="av u">나</div><div class="bub u">금연서비스만 다시 보여줘</div></div>
+      <div class="msg"><div class="av">🤵</div><div class="bub" style="font-size:11.5px">
+        금연서비스 통합정보시스템만 추려서 다시 뽑았어요.
+      </div></div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>이름 충돌 해소</b>
+    개인 = <b>업무보고</b> 📝 · 사업 = <b>사업 주간보고</b> 🏢.
+    "주간보고"라는 말은 이제 사업 쪽만 가리킨다.
+  </div>
+</div>
+
+<!-- ═══════════ 3. 툴 조정 ═══════════ -->
+<div class="step">
+  <h2><span class="n">3</span>툴 조정 <span class="where">비서</span></h2>
+  <p class="desc"><b>기본은 안 뜬다.</b> 사용자가 "조회할 곳 바꿔줘"라고 할 때만 이 카드를 띄운다.</p>
+
+  <div class="two">
+    <div class="chat">
+      <div class="msg"><div class="av">🤵</div><div style="flex:1;max-width:100%">
+        <div class="card">
+          <div class="hd">🔧 조회할 곳</div>
+          <div class="hint">기본 설정대로 체크돼 있어요 · 이번 회차만 적용됩니다</div>
+          <div class="opt on"><span class="cbx">✓</span><span class="t">두레이 <span class="s">— 완료 12 · 진행 5</span></span></div>
+          <div class="opt on"><span class="cbx">✓</span><span class="t">Gmail <span class="s">— 이번 주 48통</span></span></div>
+          <div class="opt on"><span class="cbx">✓</span><span class="t">구글 캘린더 <span class="s">— 회의 6건</span></span></div>
+          <div class="opt"><span class="cbx no">✓</span><span class="t">구글 드라이브</span></div>
+          <div class="opt"><span class="cbx no">✓</span><span class="t">SR 시스템</span></div>
+          <div class="opt off"><span class="cbx no">✓</span><span class="t">GitHub</span><span class="badge need">연동 필요</span></div>
+          <div class="foot">
+            <span class="savebox"><span class="cbx no" style="width:12px;height:12px;line-height:10px"></span> 이 구성을 기본값으로 저장</span>
+            <span class="btn p">이대로 집계</span>
+          </div>
+        </div>
+      </div></div>
+      <div class="msg u"><div class="av u">나</div><div class="bub u">이번엔 드라이브도 같이 봐줘</div></div>
+    </div>
+
+    <div>
+      <table>
+        <tr><th style="width:32%">조작</th><th>적용 범위</th></tr>
+        <tr><td>설정 화면에서 수정</td><td><b>영구</b> — 다음 cron부터 적용</td></tr>
+        <tr><td>카드에서 체크 조정</td><td><b>이번 1회</b></td></tr>
+        <tr><td>대화로 조정</td><td><b>이번 1회</b></td></tr>
+        <tr><td>「기본값으로 저장」 체크</td><td><b>영구</b> — 기본값 승격</td></tr>
+      </table>
+      <div class="note warn">
+        <b>영구와 일시를 섞지 않는다</b>
+        카드에서 뺀 툴이 다음 주 cron에도 빠져 있으면 결과를 예측할 수 없다.
+        기본값 변경은 <b>명시적 저장</b>으로만.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 4. 초안 ═══════════ -->
+<div class="step">
+  <h2><span class="n">4</span>초안 확인 · 수정 <span class="where">비서</span></h2>
+  <p class="desc">기존 메일 양식 그대로. 항목을 클릭하면 채팅창에 수정 문장이 채워진다.</p>
+
+  <style>
+    .biz{border:1px solid var(--border);border-radius:11px;margin-bottom:8px;overflow:hidden;background:var(--card)}
+    .biz .bh{padding:9px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;
+      border-bottom:1px solid #f2f0ea}
+    .biz .bn{font-size:12.5px;font-weight:800}
+    .biz .bb{padding:4px 0}
+    .it{display:flex;align-items:baseline;gap:9px;padding:5px 13px;font-size:12px}
+    .it + .it{border-top:1px solid #f7f5f0}
+    .it .st{flex:0 0 auto;width:15px;text-align:center;font-size:11px;font-weight:800;line-height:1.4}
+    .it .tx{flex:1;line-height:1.45}
+    .it .sr{font-size:9.5px;white-space:nowrap;flex:0 0 auto;color:var(--accent);
+      border-bottom:1px dotted rgba(15,118,110,.45);cursor:pointer}
+    .it .sr.no{color:var(--muted);border-bottom:none;cursor:default}
+    .it .sr::after{content:" ↗";font-size:8px;opacity:.7}
+    .it .sr.no::after{content:""}
+    .st.d{color:var(--emerald)}
+    .st.w{color:var(--amber)}
+    .st.n{color:#9aa3ae}
+    .kv{display:flex;gap:5px;align-items:center;font-size:9.5px;color:var(--muted)}
+    .kv i{font-style:normal;font-weight:800}
+    .kv .d{color:var(--emerald)} .kv .w{color:var(--amber)} .kv .n{color:#9aa3ae}
+    .empty{padding:7px 13px;font-size:11px;color:#a8a49b}
+  </style>
+
+  <div class="card" style="max-width:640px">
+    <div class="hd">📝 업무보고 초안 · 2026-08-03 ~ 08-07</div>
+    <div class="hint">전략사업팀 김다영 매니저 · 담당 3개 사업 · 두레이 · Gmail · 캘린더 집계</div>
+
+    <div style="display:flex;gap:12px;padding:0 2px 8px;font-size:10px;color:var(--muted)">
+      <span><b style="color:var(--emerald)">✓</b> 완료</span>
+      <span><b style="color:var(--amber)">◐</b> 진행중</span>
+      <span><b style="color:#9aa3ae">○</b> 차주 예정</span>
+      <span><b style="color:var(--amber)">⚠</b> 출처 없음</span>
+      <span style="margin-left:auto;color:var(--accent)">우측 출처 클릭 → 원본 열기 ↗</span>
+    </div>
+
+    <div class="biz">
+      <div class="bh">
+        <span class="bn">대한체육회 e진로지원센터</span>
+        <span class="kv"><i class="d">✓3</i><i class="w">◐1</i><i class="n">○1</i></span>
+      </div>
+      <div class="bb">
+        <div class="it"><span class="st d">✓</span><span class="tx">교육훈련비 확인서 오류 수정</span><span class="sr">두레이 #142 · 메일 ↗</span></div>
+        <div class="it"><span class="st d">✓</span><span class="tx">연계정보(CI) 확인 회신</span><span class="sr">메일 8/4 ↗</span></div>
+        <div class="it"><span class="st d">✓</span><span class="tx">문구·오탈자 수정 등 <b>4건</b> <span style="font-size:9px;color:var(--muted)">묶음</span></span><span class="sr">두레이 ↗</span></div>
+        <div class="it"><span class="st w">◐</span><span class="tx">과기정통부 점검 대응 <span style="font-size:9px;color:var(--blue);font-weight:700">지난주 예정 → 계속</span></span><span class="sr">두레이 #151</span></div>
+        <div class="it"><span class="st n">○</span><span class="tx">홈페이지 메뉴 세팅 반영</span><span class="sr no">—</span></div>
+      </div>
+    </div>
+
+    <div class="biz">
+      <div class="bh">
+        <span class="bn">금연서비스 통합정보시스템</span>
+        <span class="kv"><i class="d">✓1</i><i class="w">◐1</i><i class="n">○2</i></span>
+      </div>
+      <div class="bb">
+        <div class="it"><span class="st d">✓</span><span class="tx">관리자 점수관리 오류 조치</span><span class="sr">두레이 #147</span></div>
+        <div class="it"><span class="st w">◐</span><span class="tx">스케줄러 동기화 오류 분석</span><span class="sr">두레이 #158</span></div>
+        <div class="it"><span class="st n">○</span><span class="tx">엑셀 다운로드 오류 조치</span><span class="sr no">—</span></div>
+        <div class="it"><span class="st n">○</span><span class="tx">정기 점검 일정 협의</span><span class="sr">캘린더 8/11</span></div>
+      </div>
+    </div>
+
+    <div class="biz" style="opacity:.55">
+      <div class="bh">
+        <span class="bn" style="font-weight:600">가상융합기술 아카데미</span>
+        <span class="kv">이번 주 활동 없음</span>
+      </div>
+    </div>
+
+    <div class="biz">
+      <div class="bh">
+        <span class="bn" style="color:var(--purple)">공통 · 기타</span>
+        <span class="btn" style="font-size:9.5px;padding:1px 7px">+ 항목 추가</span>
+      </div>
+      <div class="bb">
+        <div class="it"><span class="st d">✓</span><span class="tx">기술구현그룹 주간 미팅 참석</span><span class="sr">캘린더 8/4</span></div>
+        <div class="it"><span class="st d">✓</span><span class="tx">주간보고 자동 생성 적용 <span style="font-size:9px;color:var(--purple);font-weight:700">AI 활용</span></span><span class="sr no">직접 입력</span></div>
+        <div class="it" style="background:rgba(245,158,11,.07)"><span class="st" style="color:var(--amber)">⚠</span><span class="tx">협력사 미팅 자료 검토 <span style="font-size:9px;color:#92400e;font-weight:700">출처 없음 — 확인 필요</span></span><span class="sr no">?</span></div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="btn">↺ 초기화</span>
+      <span style="display:flex;gap:6px">
+        <span class="btn">📄 메일 형태로 보기</span>
+        <span class="btn p">✓ 확정</span>
+      </span>
+    </div>
+  </div>
+
+  <div class="two" style="margin-top:14px">
+    <div class="panel">
+      <h4>① 중복 제거 — 한 작업이 여러 툴에 남는다</h4>
+      <div style="font-size:11.5px;background:var(--card);border:1px solid var(--border);
+        border-radius:8px;padding:10px 12px;line-height:1.9">
+        <span style="color:var(--rose)">✗ 병합 안 하면</span><br>
+        · 교육훈련비 확인서 오류 수정 <span class="cnt">두레이 #142</span><br>
+        · 확인서 오류 관련 회신 <span class="cnt">Gmail</span><br>
+        · 확인서 수정본 업로드 <span class="cnt">드라이브</span><br>
+        <div style="height:7px"></div>
+        <span style="color:var(--emerald)">✓ 병합 후</span><br>
+        · 교육훈련비 확인서 오류 수정 <span class="cnt">두레이 #142 · 메일 · 드라이브 ↗</span>
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:7px;line-height:1.6">
+        제목 유사도 + 시각 근접도로 묶고, <b>출처는 여러 개를 한 항목에</b> 붙인다.
+        툴을 많이 켤수록 부풀어서, 읽는 사람은 일이 3배로 늘어난 줄 안다.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>② 노이즈 압축 · ⑤ 근거 없는 항목</h4>
+      <table style="margin:0">
+        <tr><th style="width:38%">상황</th><th>처리</th></tr>
+        <tr><td>사소한 항목 다수<br><span class="cnt">오탈자·문구 수정 등</span></td>
+            <td><b>묶어서 1줄</b> — "문구·오탈자 수정 등 4건"</td></tr>
+        <tr><td>지난주 예정 → 이어짐</td><td><b>지난주 예정 → 계속</b> 표시</td></tr>
+        <tr><td>사용자가 직접 추가</td><td>출처 <b>「직접 입력」</b></td></tr>
+        <tr><td>링크를 못 만드는 출처</td><td>출처명만 · 링크 없음</td></tr>
+        <tr><td style="color:#92400e"><b>출처가 아예 없음</b></td>
+            <td style="color:#92400e"><b>⚠ 경고 표시</b> — 지어냈을 가능성</td></tr>
+      </table>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:7px;line-height:1.6">
+        LLM 환각 연구의 <b>attribution</b> 원칙 — 근거에 매칭되지 않은 출력은 걸러내거나 표시한다.
+        조용히 섞이면 보고서 신뢰가 무너진다.
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h4>🔗 증적 링크 — 출처별 생성 가능 여부 <span style="font-weight:400;color:var(--muted);font-size:11px">(2026-08-06 실측)</span></h4>
+    <table>
+      <tr><th style="width:15%">출처</th><th style="width:12%">가능</th><th>링크 형태 · 근거</th></tr>
+      <tr>
+        <td><b>구글 드라이브</b></td><td><span class="badge ok">가능</span></td>
+        <td><code>docs.google.com/document/d/{id}</code><br>
+          <span class="cnt">`gog drive`가 파일 id 반환 · 8/5 사업보고에서 이미 이 방식으로 증적 링크를 넣은 이력 있음</span></td>
+      </tr>
+      <tr>
+        <td><b>Gmail</b></td><td><span class="badge ok">가능</span></td>
+        <td><code>mail.google.com/mail/u/0/#all/{id}</code><br>
+          <span class="cnt">`gog mail search`가 id·threadId 반환</span></td>
+      </tr>
+      <tr style="opacity:.55">
+        <td><b>SR 시스템</b></td><td><span class="badge">미사용</span></td>
+        <td>링크 생성은 가능하나 <b>개인 업무보고에서는 제외</b><br>
+          <span class="cnt">처리 담당자 구분 불가 → 사업 주간보고 🏢 전용</span></td>
+      </tr>
+      <tr>
+        <td><b>두레이</b></td><td><span class="badge ok">가능</span></td>
+        <td><code>{두레이도메인}/task/{projectId}/{taskId}</code><br>
+          <span class="cnt">사업 meta.json에 <code>dooray_project_id</code> 이미 보관 · 도메인만 설정에 추가하면 됨</span></td>
+      </tr>
+      <tr>
+        <td><b>구글 캘린더</b></td><td><span class="badge need">보완 필요</span></td>
+        <td><span class="cnt">`gog calendar`가 이벤트 id는 주지만 <b>htmlLink는 반환하지 않음</b>.
+          id→URL 변환에 base64 인코딩이 필요해 불안정 → <b>gog에 htmlLink 필드 추가 권장</b></span></td>
+      </tr>
+      <tr>
+        <td><b>GitHub</b></td><td><span class="badge ok">가능</span></td>
+        <td><code>github.com/{owner}/{repo}/pull/{n}</code> · <span class="cnt">연동 설정에 owner·repo 이미 있음</span></td>
+      </tr>
+      <tr>
+        <td><b>Figma</b></td><td><span class="badge new">개발 시 포함</span></td>
+        <td><code>figma.com/file/{key}</code> · <span class="cnt">연동 자체가 신규</span></td>
+      </tr>
+    </table>
+    <div class="note" style="margin-bottom:0">
+      <b>링크는 초안 데이터에 같이 저장한다</b>
+      항목마다 <code>{ text, source, url }</code> 형태로 들고 있다가, 화면에서는 출처를 클릭 가능하게 하고
+      <b>메일 본문에는 링크를 함께 넣는다</b> (받는 사람도 증적을 바로 확인 가능).
+    </div>
+    <div class="note warn" style="margin-bottom:0">
+      <b>링크가 없는 항목도 있다</b>
+      사용자가 직접 추가한 항목이나 캘린더처럼 링크를 못 만드는 출처는 <b>—</b> 로 비워 둔다.
+      억지로 만들어 붙이면 깨진 링크가 보고서에 남는다.
+    </div>
+  </div>
+
+  <div class="two" style="margin-top:14px">
+    <div>
+      <div class="note">
+        <b>화면은 사업별, 메일은 기존 양식</b>
+        보는 사람(본인)은 <b>사업별로 묶여야</b> 빠진 게 보이고,
+        받는 사람(대표)은 <b>기존 메일 양식</b>이 익숙하다. 둘을 분리한다.
+        「메일 형태로 보기」로 발송될 본문을 그대로 확인할 수 있다.
+      </div>
+      <div class="note warn">
+        <b>활동 없는 사업도 접어서 표시</b>
+        이번 주 항목이 없으면 「활동 없음」으로 흐리게 남긴다.
+        아예 빼면 <b>빠뜨린 건지 없는 건지</b> 구분이 안 된다.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>📄 메일 본문 미리보기</h4>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;
+        padding:11px 13px;font-size:11px;line-height:1.75;font-family:'D2Coding',monospace">
+        기간(2026-08-03~2026-08-07) 전략사업팀 / 김다영 / 매니저<br><br>
+        <b>■ 완료</b><br>
+        - [e진로지원센터] 교육훈련비 확인서 오류 수정<br>
+        - [e진로지원센터] 연계정보(CI) 확인 회신<br>
+        - [금연서비스] 관리자 점수관리 오류 조치<br>
+        - 기술구현그룹 주간 미팅 참석<br><br>
+        <b>■ 진행 · 차주 계획</b><br>
+        - [e진로지원센터] 과기정통부 점검 대응<br>
+        - [e진로지원센터] 홈페이지 메뉴 세팅 반영<br>
+        - [금연서비스] 스케줄러 동기화 오류 분석<br>
+        - [금연서비스] 엑셀 다운로드 오류 조치<br><br>
+        <b>■ 업무 - AI 툴 활용</b><br>
+        - 주간보고 자동 생성 적용
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:7px">
+        기존 양식(■완료 / ■진행·차주 계획 / ■업무-AI툴) 그대로.
+        <b>[사업명] 접두어</b>로 구분하고, 공통 항목은 접두어 없이 넣는다.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 5. 메일 발송 ═══════════ -->
+<div class="step">
+  <h2><span class="n">5</span>메일 발송 <span class="where">비서</span></h2>
+  <p class="desc">초안은 이미 비서가 갖고 있다. 승인하면 바로 발송 확인 카드가 뜬다. <b>발송은 비서만</b> 한다.</p>
+
+  <div class="chat" style="max-width:660px">
+    <div class="msg u"><div class="av u">나</div><div class="bub u">확정. 발송해줘</div></div>
+    <div class="msg"><div class="av">🤵</div><div style="flex:1;max-width:88%">
+      <div class="card" style="border-color:rgba(5,150,105,.4)">
+        <div class="hd" style="color:var(--emerald)">📧 발송 전 확인</div>
+        <table style="margin:4px 0">
+          <tr><td style="width:58px;color:var(--muted)">제목</td><td>[주간보고][2026-08-03~2026-08-07]전략사업팀 김다영 매니저</td></tr>
+          <tr><td style="color:var(--muted)">받는 사람</td><td>차명건 대표 &lt;blueyooe@tideflo.com&gt;</td></tr>
+          <tr><td style="color:var(--muted)">참조</td><td>—</td></tr>
+        </table>
+        <div class="foot">
+          <span class="btn">본문 다시 보기</span>
+          <span class="btn p">📧 발송</span>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="note warn">
+    <b>발송은 반드시 확인 후</b>
+    메일은 되돌릴 수 없다. 기존 메일 발송 확인 카드 패턴을 그대로 쓴다.
+    수신자·참조는 <b>개인 설정의 기본값</b>이 미리 채워진다 (⑧).
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <h4>⚠ 실측 — 같은 주 보고가 두 번 나가고 있다 <span class="badge need">2026-08-07 확인</span></h4>
+    <table style="margin:0 0 7px">
+      <tr><th style="width:22%">발송 시각</th><th>제목</th><th style="width:16%">주체</th></tr>
+      <tr><td>7/10 01:32 <span class="cnt">(-0700)</span></td>
+          <td><code>[주간보고<b style="color:var(--rose)">(AI)</b>][2026-07-06~07-10]…</code></td><td>cron</td></tr>
+      <tr><td>7/10 17:19 <span class="cnt">(+0900)</span></td>
+          <td><code>[주간보고][2026-07-06~07-10]…</code></td><td>사람</td></tr>
+    </table>
+    <div style="font-size:11.5px;line-height:1.7">
+      6/29~7/3 주차도 동일. <b>대표는 같은 주 보고를 두 번 받는다.</b>
+      <code>(AI)</code> 표기는 구분하려던 것으로 보이나, 결과적으로 중복을 드러낼 뿐이다.
+    </div>
+    <div class="note" style="margin:9px 0 0">
+      <b>개편이 이걸 해결한다</b>
+      cron은 <b>초안까지만</b> · 발송은 <b>사람이 승인한 1회</b>뿐.
+      따라서 <code>(AI)</code> 표기도 불필요해진다 — 제목은 회사 표준 <code>[주간보고]</code> 그대로.
+    </div>
+    <div class="note warn" style="margin:9px 0 0">
+      <b>타임존이 섞여 있다</b>
+      발송 시각이 <code>-0700</code> · <code>-0500</code> · <code>-0400</code> 으로 제각각 —
+      cron이 UTC 기준으로 도는 흔적. <b>전부 <code>Asia/Seoul</code> 고정</b> 필요.
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 6. cron ═══════════ -->
+<div class="step">
+  <h2><span class="n">6</span>자동 실행 <span class="where cron">cron</span></h2>
+  <p class="desc">사람이 없는 시간에 도는 경로. <b>설정된 기본값</b>으로만 동작한다.</p>
+
+  <div class="flow" style="margin-bottom:12px">
+    <div class="node auto"><span class="ic">⏰</span><span class="t">목 17:00</span><span class="s">cron 발화</span></div>
+    <div class="arw">›</div>
+    <div class="node auto"><span class="ic">🤵</span><span class="t">비서</span><span class="s">업무보고 호출</span></div>
+    <div class="arw">›</div>
+    <div class="node auto"><span class="ic">📝</span><span class="t">기본 툴 집계</span><span class="s">설정값 사용</span></div>
+    <div class="arw">›</div>
+    <div class="node you"><span class="ic">🔔</span><span class="t">초안 알림</span><span class="s">확인 대기</span></div>
+    <div class="arw">›</div>
+    <div class="node you"><span class="ic">📧</span><span class="t">승인 후 발송</span><span class="s">금요일</span></div>
+  </div>
+
+  <table>
+    <tr><th style="width:16%">구분</th><th style="width:42%">현재</th><th>개편 후</th></tr>
+    <tr>
+      <td>cron 지시문</td>
+      <td><code style="font-size:10px">gog calendar list 3로 확인하고, gog mail search newer_than:7d로…</code> <b>1,400자</b></td>
+      <td><code style="font-size:10px">이번 주 업무보고 초안을 작성하라</code> <b>한 줄</b></td>
+    </tr>
+    <tr><td>툴 지정</td><td>프롬프트에 하드코딩</td><td>설정에서 참조</td></tr>
+    <tr><td>사용자 정보</td><td>이름·이메일 하드코딩</td><td>계정에서 자동</td></tr>
+    <tr><td>툴 추가 시</td><td>cron 전부 수정</td><td><b>수정 불필요</b></td></tr>
+    <tr><td>호출 대상</td><td>secretary가 직접 작성</td><td>secretary → <b>업무보고 위임</b></td></tr>
+  </table>
+
+  <div class="panel" style="margin-top:12px">
+    <h4>④ 실행 이력 — 실패를 알 수 있어야 한다</h4>
+    <table style="margin:0 0 8px">
+      <tr><th style="width:16%">일시</th><th style="width:12%">결과</th><th style="width:30%">수집</th><th>비고</th></tr>
+      <tr><td>08-06 17:00</td><td><span class="badge ok">성공</span></td>
+          <td>두레이 12 · 메일 48 · 캘린더 6</td><td>초안 생성 · 미발송</td></tr>
+      <tr><td>07-30 17:00</td><td><span class="badge need">부분 실패</span></td>
+          <td>두레이 12 · <b style="color:#92400e">메일 0</b> · 캘린더 4</td><td>Gmail 토큰 만료</td></tr>
+      <tr><td>07-23 17:00</td><td><span class="badge" style="background:#fee2e2;color:#991b1b">실패</span></td>
+          <td>—</td><td>API 크레딧 소진</td></tr>
+    </table>
+    <div class="note warn" style="margin:0">
+      <b>왜 필요한가</b>
+      8/3~8/4에 API 크레딧이 소진돼 대화가 통째로 유실됐는데 <b>아무도 몰랐다.</b>
+      목요일 17시 초안이 안 만들어져도 <b>금요일 아침까지 모른다</b> — 그때는 이미 늦다.
+      실패하면 <b>다음 접속 시 비서가 먼저 알리는</b> 장치가 필요하다.
+    </div>
+  </div>
+
+  <div class="note warn">
+    <b>자동 발송은 하지 않는다</b>
+    cron은 <b>초안까지만</b>. 발송은 사람이 승인해야 한다. 현재 user05·user13 cron도 같은 방식이다.
+  </div>
+</div>
+
+<!-- ═══════════ 추가 검수 ═══════════ -->
+<div class="step" style="border-color:rgba(225,29,72,.3)">
+  <h2><span class="n" style="background:var(--rose)">!</span>추가 검수에서 나온 것</h2>
+  <p class="desc">실제 운영 데이터를 확인하면서 발견한 문제들.</p>
+
+  <div class="panel" style="margin-bottom:12px">
+    <h4>⑦ 같은 사업인데 사람마다 ID·이름이 다르다 <span class="badge need">실측 확인</span></h4>
+    <table style="margin:0 0 7px">
+      <tr><th style="width:14%">사용자</th><th style="width:28%">등록한 사업 ID</th><th>실제 사업</th></tr>
+      <tr><td>user02</td><td><code>e-jinro-support</code></td><td rowspan="2">대한체육회 e진로지원센터 <b>(같은 사업)</b></td></tr>
+      <tr><td>user13</td><td><code>2026-sports</code></td></tr>
+      <tr><td>user07</td><td><code>ofiis-2026</code></td><td>이북5도위원회</td></tr>
+    </table>
+    <div class="note warn" style="margin:0">
+      <b>담당 사업을 분류 키로 쓰면 표기가 갈린다</b>
+      사람마다 각자 등록해서 <b>같은 사업이 다른 이름</b>으로 나온다.
+      팀 단위로 보고를 모으거나 대조할 때 매칭이 안 된다.
+      → <b>사업 마스터를 공용으로 두고</b>, 개인은 그중에서 담당을 고르는 구조가 필요하다.
+    </div>
+  </div>
+
+  <div class="panel">
+    <div>
+      <h4>⑧ 메일 수신자가 설정에 없다</h4>
+      <div style="font-size:11.5px;line-height:1.7">
+        지금은 비서 <code>BOOTSTRAP.md</code>에 <b>직원 목록(이름→이메일)</b>만 하드코딩돼 있다.
+        <b>주간보고를 누구에게 보내는지</b>는 어디에도 없어서, 매번 사용자가 말해야 한다.
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:7px">
+        → <b>개인 설정에 기본 수신자 · 참조</b>를 두고 비서가 참조한다.
+        사람마다 보고 받는 상급자가 다를 수 있어 전체 공용으로 두지 않는다.
+      </div>
+    </div>
+
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <h4>⑪ 이름만 바꿔서는 혼선이 안 풀린다 <span class="badge need">실측 확인</span></h4>
+    <div style="font-size:11.5px;line-height:1.7;margin-bottom:8px">
+      <code>sync-agents.sh</code>가 만드는 비서의 위임 규칙표가 이 상태다.
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;
+      padding:10px 12px;font-family:'D2Coding',monospace;font-size:11px;line-height:1.8">
+      ## 위임 규칙<br>
+      | 키워드 | 호출할 팀원 |<br>
+      | reporter&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| reporter&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span style="color:var(--rose)">← 키워드 = 에이전트 ID</span><br>
+      | business-report | business-report |
+    </div>
+    <div style="font-size:11.5px;line-height:1.7;margin-top:8px">
+      <code>keyword_map</code>에는 <b>developer·reviewer·planner 등 7개 기본 역할만</b> 정의돼 있다.
+      <code>reporter</code>·<code>business-report</code>는 없어서 <b>ID가 그대로 키워드</b>가 된다.
+      즉 <b>"주간보고 작성해줘"에 대한 규칙이 아예 없고</b>, 순전히 LLM이 이름 보고 판단한다.
+    </div>
+    <table style="margin:9px 0 0">
+      <tr><th style="width:8%">순서</th><th>필요한 조치</th></tr>
+      <tr><td><b>1</b></td><td><code>keyword_map</code>에 <b>발화 기준 키워드</b> 추가<br>
+        <span class="cnt">business-report → "사업 주간보고, 사업보고, SR, HWPX, 한글 보고서"<br>
+        work-report → "업무보고, 내 업무, 이번 주 한 일, 메일 주간보고"</span></td></tr>
+      <tr><td><b>2</b></td><td><b>옛 에이전트 제거</b> — <code>reporter</code>·<code>weekly-report-agent</code>·<code>weekly-report</code>·<code>eekly</code><br>
+        <span class="cnt">남아 있으면 셋이 경쟁한다 (user02·03은 reporter 표시명이 "주간보고 작성 📊")</span></td></tr>
+      <tr><td><b>3</b></td><td>그래도 애매하면 비서가 <b>한 번 되묻기</b><br>
+        <span class="cnt">"개인 업무보고인가요, 사업 주간보고인가요?" — 보험</span></td></tr>
+    </table>
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <h4>⑩ 초안이 유실될 수 있다</h4>
+    <div style="font-size:11.5px;line-height:1.7">
+      OpenClaw는 <b>모델 응답이 성공해야</b> 세션에 기록한다. 8/3~8/4에 크레딧이 소진되자
+      사용자 발화까지 통째로 사라졌다. 목요일 cron이 초안을 만들었어도
+      <b>같은 일이 생기면 금요일에 아무것도 남지 않는다.</b>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:7px">
+      → 초안은 세션이 아니라 <b>파일로 저장</b>하고(사업 주간보고의 <code>draft.json</code>처럼),
+      화면은 그 파일을 읽어 그린다. 대화가 날아가도 초안은 남는다.
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 결정 필요 ═══════════ -->
+<div class="step" style="border-color:rgba(124,58,237,.35)">
+  <h2><span class="n" style="background:var(--purple)">?</span>남은 결정 · 추천안</h2>
+
+  <div class="panel" style="margin-bottom:12px">
+    <h4>5.2 진입 방식 — <span style="color:var(--accent)">빠른 실행 버튼 노출 추천</span></h4>
+    <table style="margin:0 0 7px">
+      <tr><th style="width:34%"></th><th style="width:33%">① 버튼 노출 <span class="badge ok">추천</span></th><th>② 자연어만</th></tr>
+      <tr><td>혼선</td><td><b>원천 차단</b> — 버튼이 에이전트 지정</td><td>LLM 해석 의존</td></tr>
+      <tr><td>첫 사용</td><td>뭘 할 수 있는지 <b>보임</b></td><td>몰라서 안 씀</td></tr>
+      <tr><td>개발량</td><td>칩 2개 추가 <b>(기존 코드 재사용)</b></td><td>없음</td></tr>
+    </table>
+    <div style="font-size:11.5px;line-height:1.7">
+      지금 겪는 혼선이 <b>자연어 해석에서 나온다</b>. 버튼은 그 단계를 건너뛴다.
+      개발량은 사업 주간보고의 <code>QuickActions</code> 칩 구조를 그대로 써서 거의 없다.
+      <b>자연어도 계속 받는다</b> — 버튼은 확실한 길, 자연어는 보조.
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:12px">
+    <h4>5.3 담당 사업 등록 — <span style="color:var(--accent)">사업 마스터 + 개인 담당 선택 (2단) 추천</span></h4>
+    <div style="font-size:11.5px;line-height:1.7;margin-bottom:8px">
+      ⑦에서 확인된 ID 불일치 때문에 <b>기존 두 안 모두 부적합</b>하다.
+    </div>
+    <div class="flow" style="margin-bottom:8px">
+      <div class="node" style="flex:1.3"><span class="ic">🗂</span><span class="t">[공용] 사업 마스터</span>
+        <span class="s">사업당 1개 · 사업명·발주처·SR 연동</span></div>
+      <div class="arw">›</div>
+      <div class="node you" style="flex:1.3"><span class="ic">👤</span><span class="t">[개인] 담당 선택</span>
+        <span class="s">그중 내 담당만 체크</span></div>
+    </div>
+    <table style="margin:0">
+      <tr><th style="width:26%">얻는 것</th><th>내용</th></tr>
+      <tr><td>이름 통일</td><td>같은 사업이 <b>한 이름</b>으로 — 팀 단위 대조 가능</td></tr>
+      <tr><td>중복 입력 제거</td><td>사업 정보를 <b>한 번만</b> 등록</td></tr>
+      <tr><td>기존 재활용</td><td>「공공사업 시스템」 등록분을 <b>마스터로 승격</b></td></tr>
+    </table>
+    <div class="note warn" style="margin:9px 0 0">
+      <b>정해야 할 것 — 마스터 등록 권한</b>
+      관리자 전용이면 통제되나 병목, 누구나면 지금처럼 중복.
+      → <b>등록은 누구나 하되 기존 사업명과 유사하면 경고</b>하는 절충 제안.
+    </div>
+  </div>
+
+  <table>
+    <tr><th style="width:26%">그 외 항목</th><th>내용</th></tr>
+    <tr><td>Figma 연동 범위</td><td>보고에 무엇을 넣을지 (수정한 파일 목록 / 코멘트 / 버전 이력)</td></tr>
+    <tr><td>기존 에이전트 처리</td>
+        <td><code>reporter</code>·<code>weekly-report-agent</code>·<code>weekly-report</code>·<code>eekly</code>
+        — <b>제거 필요</b> (⑪ 참고 · 남으면 위임 경쟁)</td></tr>
+    <tr><td>메일 제목 표기</td><td><code>(AI)</code> 제거 후 회사 표준 <code>[주간보고]</code>로 통일할지</td></tr>
+  </table>
+</div>
+
+</div>
