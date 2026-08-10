@@ -39,6 +39,28 @@
 위임 규칙표에 줄이 생기지 않으므로(생성 대상이 `non_root_web` 목록 기준) 실질 피해는 없다.
 
 **4. 작업 전후로 다른 컨테이너 설정 해시를 대조한다.** (Task 1 Step 0 · Task 11 Step 0)
+
+### 저장소 / 라이브 분리 — 커밋 방식
+
+| 경로 | git | 역할 |
+|---|---|---|
+| `/root/openclaw-custom-platform/` | ✅ 저장소 | 코드 이력 |
+| `/opt/openclaw/` | ❌ **git 아님** | 라이브 운영 |
+
+**작업은 라이브(`/opt/openclaw/`)에서 하고, 태스크 끝에 저장소로 복사해 커밋한다.**
+각 태스크의 커밋 단계는 아래 형태를 쓴다 — 라이브에만 만들고 커밋하면 **빈 커밋이 된다.**
+
+```bash
+cd /root/openclaw-custom-platform
+mkdir -p work-report-deploy
+rsync -a --exclude='__pycache__' /opt/openclaw/work-report-deploy/ work-report-deploy/
+cp /opt/openclaw/scripts/automap-api.js scripts/automap-api.js      # 수정했을 때만
+cp /opt/openclaw/scripts/sync-agents.sh scripts/sync-agents.sh      # 수정했을 때만
+git add -A && git commit -m "<메시지>"
+```
+
+`custom-ui/` 소스는 저장소에서 직접 편집하고 빌드 산출물만 `/opt/openclaw/custom-ui/`로
+rsync 하므로, UI 태스크(Task 6)는 위 복사가 필요 없다.
 - 모든 사용자 대면 문구는 **한국어**.
 - **`temperature` 파라미터 금지** — Moonshot K2/K3는 HTTP 400 (only 1 allowed), Anthropic Sonnet5/Opus5는 deprecated. 추론 강도는 `agents.defaults.thinkingLevel`(effort)로만 조정한다.
 - **메일 발송 주체는 비서뿐.** 업무보고 에이전트는 초안까지만 만든다.
