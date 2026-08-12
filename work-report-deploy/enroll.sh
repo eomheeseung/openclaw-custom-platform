@@ -8,9 +8,19 @@ DATA_DIR="/opt/openclaw/data/user${NN}"
 [ -f "${DATA_DIR}/openclaw.json" ] || { echo "user${NN} openclaw.json 없음"; exit 2; }
 
 python3 - <<PYEOF
-import json
+import json, os, shutil, tempfile, datetime, sys
+
 cfg_path = "${DATA_DIR}/openclaw.json"
-with open(cfg_path) as f: cfg = json.load(f)
+
+# 선검증: 원본이 유효한 JSON이 아니면 아무것도 하지 않고 종료
+try:
+    with open(cfg_path, encoding='utf-8') as f:
+        raw = f.read()
+    cfg = json.loads(raw)
+except Exception as e:
+    print(f"  오류: openclaw.json 이 유효한 JSON이 아닙니다 ({e}). 중단합니다.")
+    sys.exit(1)
+
 with open("${DEPLOY_DIR}/features.json") as f: manifest = json.load(f)
 feature = next(x for x in manifest['features'] if x['id'] == "${FEATURE_ID}")
 agents = cfg.setdefault('agents', {}).setdefault('list', [])
@@ -21,8 +31,29 @@ sec = next((a for a in agents if a['id'] == 'secretary'), None)
 if sec:
     allow = sec.setdefault('subagents', {}).setdefault('allowAgents', [])
     if "${FEATURE_ID}" not in allow: allow.append("${FEATURE_ID}")
-with open(cfg_path, 'w') as f: json.dump(cfg, f, ensure_ascii=False, indent=2)
-print("  에이전트 등록 완료")
+
+# 쓰기 전 백업
+backup_path = cfg_path + ".bak." + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+shutil.copy2(cfg_path, backup_path)
+
+# 원자적 치환: 같은 디렉터리에 임시 파일로 쓴 뒤 os.replace 로 바꿔치기
+st = os.stat(cfg_path)
+cfg_dir = os.path.dirname(cfg_path) or "."
+fd, tmp_path = tempfile.mkstemp(dir=cfg_dir, prefix=".openclaw.json.tmp.")
+try:
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp_path, st.st_mode)
+    os.chown(tmp_path, st.st_uid, st.st_gid)
+    os.replace(tmp_path, cfg_path)
+except Exception:
+    if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    raise
+
+print(f"  에이전트 등록 완료 (백업: {os.path.basename(backup_path)})")
 PYEOF
 
 WR_DIR="${DATA_DIR}/work-report"
