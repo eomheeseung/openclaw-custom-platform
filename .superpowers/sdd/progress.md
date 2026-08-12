@@ -65,3 +65,9 @@
   ⚠ 발견·수정: 원자적 쓰기(os.replace)가 watch-agents 의 modify 감시를 우회 → moved_to 이벤트 추가
   ⚠ 발견·수정: sync 가 work-report SOUL 덮어씀 → CUSTOM-SOUL 마커 추가
 - 남은 것: 손재민 수동 위임 테스트 3종 · 서브에이전트 리뷰 (7~11 묶음)
+- 리뷰(7~11) 결과: 조건부 승인 → Critical 1 + Important 4 수정 완료
+  · Critical: business-report 배열(sr-table+grouping-editor 콤보) 재발행 지시 누락 → 수정
+  · pending:true 발송 오보고 방지 · spawn 완전 실패 처리 · '내 업무' 과매칭 제거 · cron 휴무 판단 구체화
+  · 잔여 기록(Minor/구조): CUSTOM-SOUL 마커 단일 의존(수동 편집 시 7명 유출 위험 — 백로그),
+    "확정" 리터럴 트리거, features.json provisioning 경로 문서화
+- user02 tools 를 연동 실상태에 맞춤 (gmail·calendar만 — 두레이 토큰 미등록. 스펙 4.1 정합)
