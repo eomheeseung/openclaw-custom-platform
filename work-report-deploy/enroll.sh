@@ -69,6 +69,14 @@ json.dump(f['data_init']['content'], open('${WR_DIR}/config.json','w'), ensure_a
   chown -R tideclaw:tideclaw "$WR_DIR"
 fi
 
+# 수집·초안 스크립트 배포 (컨테이너에서 /home/node/documents/work-report/scripts 로 보임)
+SHARED_SCRIPTS="/opt/openclaw/shared/user${NN}/work-report/scripts"
+mkdir -p "$SHARED_SCRIPTS"
+cp "${DEPLOY_DIR}/scripts/"*.py "$SHARED_SCRIPTS/"
+chmod +x "$SHARED_SCRIPTS/"*.py
+chown -R tideclaw:tideclaw "/opt/openclaw/shared/user${NN}/work-report"
+echo "  스크립트 배포"
+
 WORKSPACE="${DATA_DIR}/workspace-${FEATURE_ID}"
 mkdir -p "$WORKSPACE"; chmod 777 "$WORKSPACE"
 cp "${DEPLOY_DIR}/SOUL.template.md" "${WORKSPACE}/SOUL.md"; chmod 666 "${WORKSPACE}/SOUL.md"
