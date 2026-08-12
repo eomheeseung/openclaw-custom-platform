@@ -25,7 +25,24 @@ const PREFIX = "..";                 // `/` 는 두레이 슬래시 커맨드 �
 // `:main` 은 쓰지 않는다 — 웹 UI 가 사이드바에서 의도적으로 숨긴다
 // (Sidebar.tsx: ":main 진입점 세션은 숨김 — cron/mention 자동 메시지 누적 컨테이너 역할만").
 // main 으로 보내면 대화가 사용자 눈에 보이지 않는다(실측).
-const SESSION_KEY = "agent:secretary:dooray";
+//
+// 주 단위로 끊는다: 한 세션에 계속 쌓으면 몇 주 뒤 컨텍스트가 무거워진다.
+// 업무보고 자체가 주 단위라 리듬도 맞고, 사이드바에 주차별로 남아 되짚기 쉽다.
+const SESSION_PREFIX = "agent:secretary:dooray-";
+
+/** ISO 주차 (월요일 시작). draft-YYYY-Www 파일명과 같은 규칙이어야 한다. */
+function isoWeek(now = new Date()) {
+  const t = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const day = t.getUTCDay() || 7;            // 일요일(0) → 7
+  t.setUTCDate(t.getUTCDate() + 4 - day);    // 그 주 목요일로 이동 = ISO 기준 연도 결정
+  const year = t.getUTCFullYear();
+  const jan1 = new Date(Date.UTC(year, 0, 1));
+  const week = Math.ceil(((t - jan1) / 86400000 + 1) / 7);
+  return `${year}-W${String(week).padStart(2, "0")}`;
+}
+
+const sessionKeyFor = (week) => `${SESSION_PREFIX}${week}`;
+const sessionLabelFor = (week) => `두레이 대화 · ${week}`;
 const IDLE_MS = 60_000;              // 평소 주기
 const ACTIVE_MS = 5_000;             // 최근 대화가 있으면 촘촘히
 const ACTIVE_WINDOW_MS = 5 * 60_000; // '최근' 의 기준
@@ -89,7 +106,7 @@ function users() {
 }
 
 /** 웹 UI 와 같은 경로. challenge → connect → chat.send. */
-function sendToSession(nn, message) {
+function sendToSession(nn, message, sessionKey, label) {
   return new Promise((resolve) => {
     const cfg = readJson(`${DATA}/user${nn}/openclaw.json`);
     const token = cfg?.gateway?.auth?.token;
@@ -119,10 +136,15 @@ function sendToSession(nn, message) {
       }
       if (f.type !== "res") return;
       if (f.payload?.type === "hello-ok") {
-        req("chat.send", { sessionKey: SESSION_KEY, message, idempotencyKey: `dooray-${Date.now()}-${nn}` });
+        req("chat.send", { sessionKey, message, idempotencyKey: `dooray-${Date.now()}-${nn}` });
         return;
       }
-      if (f.payload?.status === "started") done(true);
+      if (f.payload?.status === "started") {
+        // 이름 지정은 chat.send **뒤에** — 세션이 없으면 patch 가 조용히 실패한다(실측).
+        // derivedTitle 이 노이즈(부트스트랩·해시 문구)일 때 웹 UI 가 이 label 을 쓴다.
+        if (label) { req("sessions.patch", { key: sessionKey, label }); return; }
+        done(true);
+      } else if (f.payload?.entry) done(true);   // sessions.patch 응답
       else if (f.error) { log(`user${nn} chat.send 실패`, JSON.stringify(f.error).slice(0, 120)); done(false); }
     });
   });
@@ -159,7 +181,10 @@ async function pollUser(u, state) {
       `   exec: python3 /home/node/documents/work-report/scripts/notify.py ${u.nn} "3줄 이내 요약"`,
       "   카드(work-draft 등)는 두레이로 보내지 마 — \"TideClaw 에서 확인해주세요\" 안내만.",
     ].join("\n");
-    const ok = await sendToSession(u.nn, body);
+    const week = isoWeek();
+    const labelIfNew = state.labeledWeek === week ? null : sessionLabelFor(week);
+    const ok = await sendToSession(u.nn, body, sessionKeyFor(week), labelIfNew);
+    if (ok && labelIfNew) state.labeledWeek = week;   // 이름 지정은 주에 한 번이면 된다
     log(`user${u.nn} seq${m.seq} → ${ok ? "투입" : "실패"}: ${text.slice(0, 40)}`);
   }
 }
