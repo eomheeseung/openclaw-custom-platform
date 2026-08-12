@@ -161,6 +161,10 @@ if __name__ == "__main__":
         print(json.dumps({"ok": True, "path": path, "week": d["week"], "total": total,
                           "stats": d["stats"], "failures": d["failures"],
                           "warnings": len(d["warnings"])}, ensure_ascii=False))
+        # 카드도 함께 낸다 — 화면이 도구 결과에서 이 블록을 찾아 렌더한다.
+        # 모델에게 카드를 뱉게 시키면 매번 요약해 버려 카드가 사라졌다(실측 5회+).
+        # 이 스크립트는 초안을 만들려면 반드시 실행되므로 카드가 누락될 수 없다.
+        print(f"```work-draft\n{json.dumps(d, ensure_ascii=False, indent=2)}\n```")
     except Exception as e:
         run_log.record(nn, ok=False, error=str(e))
         print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))

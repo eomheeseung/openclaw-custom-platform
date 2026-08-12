@@ -916,6 +916,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* GET /api/work-report/draft?week=2026-W33 — 초안 원본.
+     화면이 exec 결과(build_draft.py 출력)를 보고 이걸 불러와 카드를 그린다.
+     모델에게 카드 블록을 출력하게 시켰더니 매번 자기 말로 요약해 카드가 아예 안 나왔다(실측 5회+).
+     스크립트 실행은 반드시 일어나므로, 카드 렌더를 모델 출력에서 떼어낸다. */
+  if (req.method === 'GET' && url.pathname === '/api/work-report/draft') {
+    // ⚠ 2번째 인자는 **문자열 userNN** 이다. url 객체를 넘기면 컨테이너 밖 호출에서
+    // 그 객체가 그대로 경로에 박혀 404 가 난다 (브라우저는 nginx 를 거쳐 오므로 IP 매핑이 안 된다).
+    const nn = resolveUserNN(req, url.searchParams.get('userNN'));
+    if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    // week 생략 시 현재 주차 — 화면은 exec 실행만 감지하므로 주차를 모른다
+    let week = (url.searchParams.get('week') || '').trim();
+    if (!week) {
+      const d = new Date();
+      const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+      t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+      const y = t.getUTCFullYear();
+      const w = Math.ceil(((t - new Date(Date.UTC(y, 0, 1))) / 86400000 + 1) / 7);
+      week = `${y}-W${String(w).padStart(2, '0')}`;
+    }
+    if (!/^\d{4}-W\d{2}$/.test(week)) { jsonRes(res, 400, { ok: false, error: 'bad week' }); return; }
+    try {
+      const p = `/opt/openclaw/data/user${nn}/work-report/drafts/draft-${week}.json`;
+      jsonRes(res, 200, { ok: true, draft: JSON.parse(fs.readFileSync(p, 'utf8')) });
+    } catch (e) { jsonRes(res, 404, { ok: false, error: 'draft not found' }); }
+    return;
+  }
+
   /* GET /api/work-report/config — 개인 설정 + 내 담당 사업(마스터 역참조) */
   if (req.method === 'GET' && url.pathname === '/api/work-report/config') {
     const nn = resolveUserNN(req, url);
