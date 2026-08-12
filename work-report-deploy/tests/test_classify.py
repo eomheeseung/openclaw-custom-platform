@@ -41,3 +41,19 @@ def test_plain_mail_stays_common():
 def test_existing_biz_id_respected():
     it = _it(text="금연서비스 언급되지만", biz_id="biz-sports")
     assert classify([it], BS)[0]["biz_id"] == "biz-sports"
+
+SVC = [
+    {"id": "svc-01", "name": "묘한사주", "alias": "묘한사주", "aliases": ["ToonFortune"]},
+    {"id": "svc-02", "name": "데일리뉴스나우", "alias": "데일리뉴스나우", "aliases": ["newsnow"]},
+    {"id": "svc-03", "name": "밀도", "alias": "밀도", "aliases": ["persona_match", "mildo"]},
+]
+
+def test_repo_name_matches_english_alias():
+    """레포 등록 없이 별칭만으로 매핑 — 레포가 늘어도 등록 불필요"""
+    assert classify([_it(repo="infconn/ToonFortune")], SVC)[0]["biz_id"] == "svc-01"
+    assert classify([_it(repo="infconn/ToonFortune-api")], SVC)[0]["biz_id"] == "svc-01"
+    assert classify([_it(repo="infconn/newsnow")], SVC)[0]["biz_id"] == "svc-02"
+    assert classify([_it(repo="eomheeseung/persona_match_front")], SVC)[0]["biz_id"] == "svc-03"
+
+def test_unrelated_repo_stays_common():
+    assert classify([_it(repo="tideflo/internal-tools")], SVC)[0]["biz_id"] is None

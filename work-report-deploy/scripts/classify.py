@@ -38,13 +38,20 @@ def business_for_container(container_name, businesses):
 
 
 def business_for_text(text, businesses):
-    """제목/레포명에 별칭이 통째로 들어 있으면 그 사업 (2자 이상 별칭만)."""
+    """제목/레포명에 별칭이 통째로 들어 있으면 그 사업 (2자 이상 별칭만).
+    영문 별칭은 레포명 매칭용 — 대소문자·구분자 무시 (ToonFortune ↔ toonfortune-api)."""
     if not text:
         return None
+    flat = re.sub(r"[\s\-_./]+", "", text).lower()
     for b in businesses:
         for alias in [b.get("alias")] + list(b.get("aliases") or []):
             alias = (alias or "").strip()
-            if len(alias) >= 2 and alias in text:
+            if len(alias) < 2:
+                continue
+            if alias in text:
+                return b["id"]
+            a_flat = re.sub(r"[\s\-_./]+", "", alias).lower()
+            if len(a_flat) >= 4 and a_flat in flat:
                 return b["id"]
     return None
 
@@ -55,10 +62,9 @@ def _registered(it, businesses):
     for b in businesses:
         if pid and pid == b.get("dooray_project_id"):
             return b["id"]
-        if repo:
-            for spec in b.get("github_repos") or []:
-                if spec.lower().split("/")[-1] == repo.split("/")[-1]:
-                    return b["id"]
+        for spec in b.get("github_repos") or []:   # 예외 확정용 (보통 비어 있음)
+            if repo and spec.lower().split("/")[-1] == repo.split("/")[-1]:
+                return b["id"]
     return None
 
 
