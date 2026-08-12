@@ -90,7 +90,8 @@ function webLink(nn, week) {
 // 15초 주기 × 14명 = 0.93회/초 → 한도의 19%. 여유가 있으니 응답성을 택한다.
 const IDLE_MS = 15_000;               // 평소에도 15초 안에는 잡는다
 const ACTIVE_MS = 5_000;              // 대화 중이면 더 촘촘히
-const ACTIVE_WINDOW_MS = 30 * 60_000; // 5분은 짧다 — 답 받고 6분 뒤 물으면 느려졌다(실측)
+const ACTIVE_WINDOW_MS = 30 * 60_000;
+const AGENT_STICKY_MS = 30 * 60_000;  // 이름 없는 후속을 직전 담당에게 붙여 두는 기간 // 5분은 짧다 — 답 받고 6분 뒤 물으면 느려졌다(실측)
 const API = "https://api.dooray.com/messenger/v1/channels";
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -239,7 +240,14 @@ async function pollUser(u, state) {
       `   ${webLink(u.nn, isoWeek())}`,
     ].join("\n");
     const week = isoWeek();
-    const agentId = resolveAgent(u.nn, text) || "secretary";
+    /* 이름이 드러나면 그 에이전트, 아니면 **최근에 이야기하던 담당**으로 이어간다.
+       "거기서 두 번째 빼줘" 처럼 이름 없는 후속이 비서로 가면 맥락을 잃는다.
+       30분이 지나면 끊는다 — 한참 뒤의 새 요청까지 붙으면 엉뚱한 곳으로 간다. */
+    const matched = resolveAgent(u.nn, text);
+    const recent = Date.now() - Number(state.lastAgentAt || 0) < AGENT_STICKY_MS;
+    const agentId = matched || (recent && state.lastAgent) || "secretary";
+    state.lastAgent = agentId;
+    state.lastAgentAt = Date.now();
     const key = sessionKeyFor(week, agentId);
     // 이름표는 세션마다 한 번씩
     const labeled = state.labeledKeys || {};
