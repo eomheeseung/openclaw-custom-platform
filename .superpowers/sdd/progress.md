@@ -22,3 +22,13 @@
 - [ ] **B. keyword_map 확장 범위** — 현재 계획은 work-report·business-report 두 줄만 추가.
       기존 커스텀 에이전트(docwriter·bid-reviewer·planmanager 등)도 함께 등록하면
       위임 0건인 7명(user01·04·09·10·11·14·16)에게 즉시 효과.
+
+## 두레이 연동 방향 (2026-08-12 결정)
+- **채택**: 두레이 메신저 활용 — B안(지시 받기 + 알림 회신)
+  - 기술 확인 완료: OpenClaw `webhooks` 확장에 `path`/`sessionKey`/`secret`/`controllerId` 필드 존재
+  - 두레이 Outgoing → webhooks(sessionKey로 세션 투입) → 처리 → Incoming으로 회신
+  - A(알림)는 B에 포함됨 — B의 마지막 단계가 알림이라 따로 만들 필요 없음
+  - 현재 상태: webhooks 설정 **전무**, 두레이 incoming URL **없음** → 신규 개발
+- **보류**: C안(두레이 task 이벤트 트리거) — 나중에 고려
+  - 무엇에 반응할지 규칙이 먼저 정해져야 하고, 출력 통로(A)가 선행되어야 함
+- 지금 진행 중인 플랜(Task 2~11)과 **독립 과제**. 현 작업 완료 후 착수.
