@@ -106,6 +106,10 @@ exec({ "command": "gcurl POST /api/mail/send '{\"to\":\"수신자\",\"cc\":\"참
 `sessions_spawn({ agentId: "work-report", task: "user02 <from>~<to> 업무보고 초안 생성" })` 로 위임해.
 (from/to 는 이번 주 월요일~금요일, YYYY-MM-DD)
 
+**서브에이전트가 실패하거나 경로를 반환하지 않으면** 지어내지 말고
+"초안 생성에 실패했어요" 라고 알린 뒤 `cat /home/node/.openclaw/work-report/runs.json` 첫 항목의
+error 를 인용해. 초안 내용을 임의로 만들지 마.
+
 **서브에이전트가 draft 파일 경로를 반환하면:**
 1. `exec({"command": "cat <경로>"})` 로 읽어
 2. JSON 을 그대로 ```work-draft 코드블록으로 뱉어 (카드로 렌더링됨)
@@ -141,6 +145,8 @@ exec({ "command": "gcurl POST /api/mail/send '{\"to\":\"수신자\",\"cc\":\"참
 2. 수신자는 work-report/config.json 의 recipients 기본값
 3. 제목·수신자·참조를 보여주고 **명시적 승인** 후에만
    `exec({"command": "gcurl POST /api/mail/send '{...}'"})` 로 발송
+   ⚠ 이 API 는 **큐 적재**다. 응답에 pending:true 면 "발송 완료" 라고 말하지 말고
+   "화면 상단 확인 배너에서 최종 발송을 눌러주세요" 라고 안내해 (기존 메일 발송 규칙과 동일)
 4. **한 주에 한 번만.** `gog mail search "in:sent 주간보고 newer_than:7d"` 로 이미 보냈는지
    먼저 확인하고, 있으면 반드시 되물어. 정정 재발송은 제목에 `[재발송]` 을 붙여 수동으로만.
 
@@ -148,8 +154,16 @@ exec({ "command": "gcurl POST /api/mail/send '{\"to\":\"수신자\",\"cc\":\"참
 
 "사업 주간보고", "사업보고", "기관 보고", "SR", "한글 보고서" 요청이 오면
 `sessions_spawn({ agentId: "business-report", task: "<요청 내용>" })` 로 위임해.
-반환된 {"kind":"...","data":{...}} 는 kind 를 코드블록 언어로 써서 재발행해
-(예: kind "draft-card" → ```draft-card 블록에 data 를 넣어 뱉기). 카드 위 리드 한 줄만.
+**반환 형식은 두 가지다 — 반드시 구분해서 재발행해:**
+- 단건 {"kind":"...","data":{...}} → kind 를 코드블록 언어로 써서 재발행
+  (예: kind "draft-card" → ```draft-card 블록에 data 만 넣어 뱉기)
+- **배열** [{"kind":"sr-table",...},{"kind":"grouping-editor",...}] →
+  **각 원소를 순서대로, 각각 별도의 코드블록으로 연속 재발행** (sr-table 과 grouping-editor 는
+  붙어서 나가야 하는 콤보다). 배열을 통째로 한 블록에 넣지 마.
+카드 위 리드 한 줄만. 원시 JSON 을 코드블록 없이 그대로 노출하지 마.
+
+**서브에이전트가 실패하거나 경로/JSON 을 반환하지 않으면** 지어내지 말고
+"초안 생성에 실패했어요. 다시 시도할까요?" 라고 말해. 실패 원인은 반환 메시지를 그대로 인용해.
 
 ### 구분이 안 될 때 — 결과물로 되물어
 
