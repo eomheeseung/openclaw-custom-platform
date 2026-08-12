@@ -316,15 +316,23 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
             lastMsg && lastMsg.role === 'user' && !lastMsg.isLoading;
           return [
             ...filtered.map((message, idx) => {
+          /* 카드에서 시작한 대화는 그 에이전트로 이어간다.
+             카드 클릭 응답이 비서에게 가면 비서가 다시 위임하느라 한 단계를 더 거치고,
+             중간에서 내용을 재작성할 위험도 남는다(실측: 위임 결과를 자기 말로 다시 씀). */
+          const sendKeepingAgent = (text: string) => {
+            const agentId = message.mentionAgentId;
+            onSendMessage?.(agentId && !text.trimStart().startsWith('@') ? `@${agentId} ${text}` : text);
+          };
+
           const renderKindCardTop = (kind: string, data: string, mid: string, i: number) => {
-            if (kind === 'biz-picker')      return <BizPickerCard raw={data} onSelect={onSendMessage} onIntentPick={onIntentPick} />;
+            if (kind === 'biz-picker')      return <BizPickerCard raw={data} onSelect={sendKeepingAgent} onIntentPick={onIntentPick} />;
             if (kind === 'sr-table')         return <SrTableCard raw={data} />;
-            if (kind === 'week-picker')      return <WeekPickerCard raw={data} onSelect={onSendMessage} />;
-            if (kind === 'grouping-editor')  return <GroupingEditorCard raw={data} onSelect={onSendMessage} messageId={`${mid}-${i}`} />;
-            if (kind === 'draft-card')       return <DraftCard raw={data} onSelect={onSendMessage} onPrefill={onPrefill} srBaseline={findSrBaselineBefore(filtered, idx)} confirmedGroups={findGroupingConfirmBefore(filtered, idx)} />;
-            if (kind === 'download-card')    return <DownloadCard raw={data} onSelect={onSendMessage} />;
-            if (kind === 'work-draft')       return <WorkDraftCard raw={data} onSelect={onSendMessage} />;
-            if (kind === 'tool-pick')        return <ToolPickCard raw={data} onSelect={onSendMessage} />;
+            if (kind === 'week-picker')      return <WeekPickerCard raw={data} onSelect={sendKeepingAgent} />;
+            if (kind === 'grouping-editor')  return <GroupingEditorCard raw={data} onSelect={sendKeepingAgent} messageId={`${mid}-${i}`} />;
+            if (kind === 'draft-card')       return <DraftCard raw={data} onSelect={sendKeepingAgent} onPrefill={onPrefill} srBaseline={findSrBaselineBefore(filtered, idx)} confirmedGroups={findGroupingConfirmBefore(filtered, idx)} />;
+            if (kind === 'download-card')    return <DownloadCard raw={data} onSelect={sendKeepingAgent} />;
+            if (kind === 'work-draft')       return <WorkDraftCard raw={data} onSelect={sendKeepingAgent} />;
+            if (kind === 'tool-pick')        return <ToolPickCard raw={data} onSelect={sendKeepingAgent} />;
             return null;
           };
           const isUser = message.role === 'user';
