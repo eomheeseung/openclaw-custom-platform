@@ -47,7 +47,6 @@
 | `work-report-deploy/scripts/build_draft.py` | 초안 조립 + **이월 대조** + 주차별 저장 | 5 |
 | `work-report-deploy/scripts/run_log.py` | 실행 이력 | 5 |
 | `custom-ui/src/components/WorkReportCards.tsx` | `work-draft`(보고서 미리보기형) · `tool-pick` 카드 | 6 |
-| `custom-ui/src/components/QuickActions.tsx` | 비서 화면 업무 칩 2개 | 6 |
 | `custom-ui/src/components/MessageList.tsx` · `utils/messageFilter.ts` | fence 라우팅·필터 예외 | 6 |
 | `/opt/openclaw/scripts/sync-agents.sh` | `keyword_map` 발화 키워드 확장 (기존 에이전트 포함) | 7 |
 | `/opt/openclaw/data/user02/BOOTSTRAP.md` | 위임 규칙·재발행·되묻기·발송 절차 | 7·8 |
@@ -812,7 +811,7 @@ Expected: 전체 테스트 `passed` · `{"ok": true, "week": "2026-W33", ...}` �
 
 **Files:**
 - Create: `custom-ui/src/components/WorkReportCards.tsx`
-- Modify: `custom-ui/src/components/MessageList.tsx` (fence 2개) · `custom-ui/src/utils/messageFilter.ts` (`CARD_FENCE_MARKERS`) · `custom-ui/src/components/QuickActions.tsx` (`DEFAULT_CHIPS`)
+- Modify: `custom-ui/src/components/MessageList.tsx` (fence 2개) · `custom-ui/src/utils/messageFilter.ts` (`CARD_FENCE_MARKERS`)
 
 **Interfaces:**
 - Consumes: Task 5 draft 스키마 (`businesses[].alias`·`failures[]`·item `carry`)
@@ -1018,19 +1017,15 @@ import 추가: `import { WorkDraftCard, ToolPickCard } from './WorkReportCards';
   '```tool-pick',
 ```
 
-- [ ] **Step 4: 업무 칩 2개** — `QuickActions.tsx` 의 `DEFAULT_CHIPS` 맨 앞에 (비서 화면 = 업무 바로가기, 에이전트 선택기 아님):
-
-```tsx
-  { label: '이번 주 업무보고', icon: FileText, prompt: '이번 주 업무보고 초안 만들어줘.', send: true, tone: 'accent', hint: '내가 한 일 → 메일 (사내)' },
-  { label: '사업 주간보고 (기관 제출용)', icon: Building2, prompt: '사업 주간보고 만들어줘.', send: true, tone: 'soft', hint: 'SR → 한글 파일 (대외 제출)' },
-```
-lucide import 에 `FileText`·`Building2` 가 없으면 추가.
+- [ ] ~~Step 4: 업무 칩~~ — **제거됨 (2026-08-12).** 상시 노출 칩은 에이전트 증가에 따라
+  잡동사니가 되므로 두지 않는다. 진입은 자연어(keyword_map+되묻기), 반복 업무는 푸시(cron·알림)가 대체.
+  `QuickActions.tsx` 는 수정하지 않는다.
 
 - [ ] **Step 5: 검증 + 배포**
 
 ```bash
 cd /root/openclaw-custom-platform/custom-ui
-npx tsc --noEmit 2>&1 | grep -E "WorkReportCards|MessageList|messageFilter|QuickActions"; echo "--- 에러 없으면 통과 ---"
+npx tsc --noEmit 2>&1 | grep -E "WorkReportCards|MessageList|messageFilter"; echo "--- 에러 없으면 통과 ---"
 npm run build 2>&1 | tail -3
 rsync -a --delete dist/ /opt/openclaw/custom-ui/
 docker exec openclaw-nginx nginx -s reload
