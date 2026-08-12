@@ -129,9 +129,20 @@ export function stripUserWrapper(content: string): string {
 }
 
 /* 메시지 본문 본체로 사용자한테 보여줄 가치 있는지 판정. */
+const CARD_FENCES = [
+  '```work-draft', '```tool-pick', '```biz-picker', '```sr-table', '```week-picker',
+  '```grouping-editor', '```draft-card', '```download-card',
+];
+
 export function shouldHideMessage(role: string, rawContent: string): boolean {
   const c = (rawContent || '').trim();
   if (!c) return true;
+
+  /* 0-A. 도구 결과라도 **카드 블록이 들어 있으면 통과**시킨다.
+     모델에게 카드를 출력하게 시키면 매번 자기 말로 요약해 카드가 사라진다(실측 5회+,
+     비서·서브에이전트 양쪽). 스크립트가 카드를 출력하고 도구 결과로 흘려보내면
+     모델이 개입할 여지가 없다. 에이전트가 늘어도 여기 손댈 것이 없다. */
+  if (role === 'toolResult' && CARD_FENCES.some(f => c.includes(f))) return false;
 
   /* 0. role whitelist — user/assistant/system 셋만 통과.
      OpenClaw는 tool 결과를 role='toolResult', role='toolCall' 별도 메시지로 저장하는데
