@@ -184,7 +184,9 @@ const KIND_CARDS = new Set([
 
 function parseKindCards(raw: string): Array<{ kind: string; data: unknown }> | null {
   try {
-    const parsed = JSON.parse(raw);
+    /* ```json 펜스가 붙어 오기도, 맨 JSON 으로 오기도 한다(실측 둘 다) */
+    const body = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(body);
     const arr = Array.isArray(parsed) ? parsed : [parsed];
     if (!arr.length) return null;
     const cards = arr.filter((x): x is { kind: string; data: unknown } =>
@@ -314,6 +316,17 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
             lastMsg && lastMsg.role === 'user' && !lastMsg.isLoading;
           return [
             ...filtered.map((message, idx) => {
+          const renderKindCardTop = (kind: string, data: string, mid: string, i: number) => {
+            if (kind === 'biz-picker')      return <BizPickerCard raw={data} onSelect={onSendMessage} onIntentPick={onIntentPick} />;
+            if (kind === 'sr-table')         return <SrTableCard raw={data} />;
+            if (kind === 'week-picker')      return <WeekPickerCard raw={data} onSelect={onSendMessage} />;
+            if (kind === 'grouping-editor')  return <GroupingEditorCard raw={data} onSelect={onSendMessage} messageId={`${mid}-${i}`} />;
+            if (kind === 'draft-card')       return <DraftCard raw={data} onSelect={onSendMessage} onPrefill={onPrefill} srBaseline={findSrBaselineBefore(filtered, idx)} confirmedGroups={findGroupingConfirmBefore(filtered, idx)} />;
+            if (kind === 'download-card')    return <DownloadCard raw={data} onSelect={onSendMessage} />;
+            if (kind === 'work-draft')       return <WorkDraftCard raw={data} onSelect={onSendMessage} />;
+            if (kind === 'tool-pick')        return <ToolPickCard raw={data} onSelect={onSendMessage} />;
+            return null;
+          };
           const isUser = message.role === 'user';
           const isSystem = message.role === 'system';
 

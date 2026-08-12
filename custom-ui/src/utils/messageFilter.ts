@@ -94,7 +94,8 @@ const CARD_FENCE_MARKERS: readonly string[] = [
    한글 포함 여부와 무관하게 동작. */
 /* 서브에이전트는 카드를 ```json {"kind":"sr-table","data":{…}} 형태로도 낸다.
    ```json 자체를 카드로 인정하면 평범한 JSON 응답까지 통과하므로 kind 키까지 확인한다. */
-const KIND_CARD_RE = /```json\s*\[?\s*\{\s*"kind"\s*:/;
+/* 모델은 같은 카드를 ```json 으로 감싸기도, 맨 JSON 으로 내기도 한다(실측 둘 다 관찰). */
+const KIND_CARD_RE = /^\s*(?:```json\s*)?\[?\s*\{\s*"kind"\s*:/;
 
 export function containsRawDumpMarker(content: string): boolean {
   if (!content) return false;
