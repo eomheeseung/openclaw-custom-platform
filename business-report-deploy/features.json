@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "features": [
+    {
+      "id": "business-report",
+      "name": "사업 주간보고 (기관 제출용)",
+      "emoji": "🏢",
+      "description": "공공사업 SR 시스템 연동 · 주간보고서 hwpx 자동 생성",
+      "soul_template": "/opt/openclaw/business-report-deploy/SOUL.template.md",
+      "scripts_dir": "/opt/openclaw/business-report-deploy/scripts",
+      "agent_config": {
+        "id": "business-report",
+        "default": false,
+        "name": "사업 주간보고 (기관 제출용)",
+        "identity": {
+          "name": "사업 주간보고 (기관 제출용)",
+          "emoji": "🏢"
+        },
+        "subagents": {
+          "allowAgents": []
+        },
+        "tools": {},
+        "workspace": "/home/node/.openclaw/workspace-business-report",
+        "agentDir": "/home/node/.openclaw/agents/business-report/agent"
+      },
+      "data_init": {
+        "path": "business-report/projects.json",
+        "content": {
+          "projects": [],
+          "default": null
+        }
+      },
+      "current_version": "v3",
+      "created_at": "2026-07-15"
+    }
+  ]
+}
