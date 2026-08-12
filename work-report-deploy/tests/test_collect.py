@@ -56,3 +56,21 @@ def test_iso_normalizes_rfc2822_date():
     assert _iso("Wed, 12 Aug 2026 03:02:26 +0000").startswith("2026-08-12")
     assert _iso("2026-08-12T09:00:00+09:00").startswith("2026-08-12")
     assert _iso("") == ""
+
+
+def test_clean_title_strips_prefixes_mechanically():
+    """LLM 에 맡기면 한글을 새로 생성해 글자가 깨진다(실측: 업무→업묵/업뭏) — 규칙으로 지운다"""
+    from collect import clean_title
+    assert clean_title("Re: 회의 일정") == "회의 일정"
+    assert clean_title("Re: RE: 회의") == "회의"
+    assert clean_title("[공지] Fwd: 배포 안내") == "배포 안내"
+    assert clean_title("[Docswave] [회람 문서] [결재] 연차신청서") == "연차신청서"
+    assert clean_title("정상 제목") == "정상 제목"
+    assert clean_title("") == ""
+
+
+def test_clean_title_uses_tag_when_title_is_all_tags():
+    """제목이 대괄호뿐이면 전부 지워져 빈 문자열이 된다 — 첫 태그 안을 제목으로"""
+    from collect import clean_title
+    assert clean_title("Fwd: [주간업무보고 회의록][2026-08-10]") == "주간업무보고 회의록"
+    assert clean_title("[주간보고][2026-08-10~2026-08-14]") == "주간보고"

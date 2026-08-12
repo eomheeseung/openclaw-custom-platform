@@ -12,6 +12,7 @@
   호출 실패는 failures 로 반환해 카드 배지로 띄운다.
 """
 import json
+import re
 import subprocess
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -24,6 +25,32 @@ def tool_enabled(tools, name):
     if name in BLOCKED_TOOLS:
         return False
     return name in (tools or [])
+
+
+RE_PREFIX = re.compile(r"^\s*(?:re|fwd?|fw|답장|전달)\s*:\s*", re.I)
+RE_TAG = re.compile(r"^\s*\[[^\]]{1,30}\]\s*")
+
+
+def clean_title(text):
+    """제목 앞머리의 Re:/Fwd:/[태그] 를 규칙으로 걷어낸다.
+
+    ⚠ 이 정리를 LLM 에 맡기면 한글을 매번 새로 생성하게 되어 글자가 깨진다
+    (실측: 주간업무보고 → 주간업묵보고/업묳보고/업뭏보고 — 매번 다른 글자).
+    기계적으로 지울 수 있는 것은 기계가 지운다."""
+    t = (text or "").strip()
+    body = t
+    for _ in range(6):                 # "[공지] Fwd: [결재] …" 처럼 번갈아 겹친다
+        nxt = RE_TAG.sub("", RE_PREFIX.sub("", body)).strip()
+        if nxt == body:
+            break
+        body = nxt
+    if body:
+        return body
+    # 제목이 대괄호뿐이면 전부 지워져 빈 문자열이 된다 → 첫 태그 안을 제목으로.
+    # 예: "Fwd: [주간업무보고 회의록][2026-08-10]" → "주간업무보고 회의록"
+    head = RE_PREFIX.sub("", t).strip()
+    m = RE_TAG.match(head)
+    return (m.group(0).strip().strip("[]").strip() if m else head) or t
 
 
 def _iso(at):
@@ -42,8 +69,10 @@ def normalize_item(raw, source, biz_id=None, url=None, status="done", **extra):
             or raw.get("summary") or "").strip()
     at = _iso(raw.get("updatedAt") or raw.get("date") or raw.get("modified")
               or raw.get("start") or "")
-    it = {"text": text, "source": source, "url": url,
+    it = {"text": clean_title(text), "source": source, "url": url,
           "biz_id": biz_id, "at": at, "status": status}
+    if it["text"] != text:
+        it["raw_text"] = text          # 원문 — 다듬기 결과를 대조할 근거
     it.update(extra)          # project / project_id / repo — classify 가 매핑에 씀
     return it
 
