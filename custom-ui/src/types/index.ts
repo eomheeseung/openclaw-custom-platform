@@ -6,6 +6,8 @@ export interface Agent {
   model?: string;
   subagents?: string[];
   default?: boolean;
+  /* 이름으로 안 잡히는 말투를 보완하는 선택 별칭 (openclaw.json agents.list[].aliases) */
+  aliases?: string[];
 }
 
 export interface Session {

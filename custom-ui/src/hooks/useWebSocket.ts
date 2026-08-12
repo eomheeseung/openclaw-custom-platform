@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ConnectionStatus, Agent, Session, ProtocolFrame } from '../types';
 import { shouldHideMessage } from '../utils/messageFilter';
+import { withAgentMention } from '../utils/agentRouting';
 
 interface UseWebSocketProps {
   url: string;
@@ -134,6 +135,10 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   const subagentReturned = useRef<boolean>(false); // 서브에이전트 종료 → 비서로 전달된 상태
   const mentionSessionKeys = useRef<Map<string, string>>(new Map()); // mention sessionKey → target agentId
   const mentionParentByKey = useRef<Map<string, string>>(new Map()); // mention sessionKey → parent sessionKey
+  /* 직전에 응답한 멘션 에이전트 — 카드 조작·후속 질문이 비서로 새지 않게 이어 붙인다.
+     "예정사항에 항목 추가해줘" 처럼 에이전트 이름이 없는 후속 문장이 비서로 가면
+     비서가 다시 위임하면서 카드가 사라진다(실측). */
+  const lastMentionAgentRef = useRef<string | null>(null);
   const agentsRef = useRef<Agent[]>([]);
   const tokenRef = useRef(token);
   tokenRef.current = token;
@@ -211,6 +216,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           emoji: identity?.emoji || '',
           subagents: subagents?.allowAgents,
           default: (a.default as boolean) || false,
+          aliases: (a.aliases as string[]) || [],
         };
       });
       setAgents(agentList);
@@ -463,6 +469,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
         return [...updated, { id: `run-${runId}`, role: 'assistant' as const, content: text, timestamp: new Date(), isLoading: false, mentionAgentId }];
       });
       // mention 세션 완료 → 부모 세션 로그에 응답 저장 후 map 정리
+      if (mentionAgentId) lastMentionAgentRef.current = mentionAgentId;
       if (isMention && evtSessionKey && mentionAgentId) {
         const parentKey = mentionParentByKey.current.get(evtSessionKey);
         if (parentKey) {
@@ -724,7 +731,13 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   }, [currentSession]);
 
   // Send chat message
-  const sendMessage = useCallback(async (content: string, attachments?: File[]) => {
+  const sendMessage = useCallback(async (contentRaw: string, attachments?: File[]) => {
+    /* 담당 에이전트가 문장에서 드러나면 멘션을 붙여 **비서를 거치지 않고** 직접 보낸다.
+       비서는 위임까지는 하지만 결과를 자기 말로 다시 써서 카드가 사라진다(실측). */
+    let content = withAgentMention(contentRaw, agentsRef.current);
+    if (content === contentRaw && lastMentionAgentRef.current && !contentRaw.trimStart().startsWith('@')) {
+      content = `@${lastMentionAgentRef.current} ${contentRaw}`;
+    }
     // @멘션 파싱: 메시지 맨 앞 @<agentId> 감지
     const mentionMatch = content.match(/^@([a-zA-Z0-9_-]+)\s+([\s\S]*)$/);
     let mentionTargetId: string | null = null;
@@ -885,6 +898,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   }, [currentSession, sendRequest, messages, sessions]);
 
   const createSession = useCallback((agentId?: string) => {
+    lastMentionAgentRef.current = null;   // 대화가 바뀌면 이어가기도 끊는다
     const agent = agentId || 'main';
     const label = generateId().slice(0, 8);
     const newKey = `agent:${agent}:${label}`;
@@ -894,11 +908,13 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
 
   // ChatGPT 방식: 빈 시작 화면으로 진입 (currentSession 비움, 메시지 비움)
   const clearSession = useCallback(() => {
+    lastMentionAgentRef.current = null;   // 대화가 바뀌면 이어가기도 끊는다
     setCurrentSession(null);
     setMessages([]);
   }, []);
 
   const switchSession = useCallback((sessionKey: string) => {
+    lastMentionAgentRef.current = null;   // 대화가 바뀌면 이어가기도 끊는다
     setCurrentSession(sessionKey);
     sendRequest('chat.history', { sessionKey, limit: 200 })
       .then((res) => {
