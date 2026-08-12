@@ -59,3 +59,9 @@
 - Task 3~5 complete — 파이프라인 + paths.py(환경 감지, 플랜 조정), 컨테이너 실검증 (failures 감지 실증)
   ⚠ 발견: 원시 수집 항목에 뉴스레터 등 노이즈 → Task 7 의 work-report SOUL 에 "LLM 다듬기 단계" 추가 필요
     (보고 가치 없는 항목 제외 · 명사형 재작성 — draft.json 을 에이전트가 다듬어 재저장 후 반환)
+- Task 6 complete (1b07f9a) — work-draft·tool-pick 카드, 빌드·배포
+- Task 7~9 complete (f349cf8) — keyword_map 확장 · BOOTSTRAP 위임/발송/RAG출처 · SOUL 다듬기 단계 · cron
+- Task 10~11 complete — 비서 경유 분기 · 표시명 · reporter 제거 · 격리 검증 (user02 만 변경 확인)
+  ⚠ 발견·수정: 원자적 쓰기(os.replace)가 watch-agents 의 modify 감시를 우회 → moved_to 이벤트 추가
+  ⚠ 발견·수정: sync 가 work-report SOUL 덮어씀 → CUSTOM-SOUL 마커 추가
+- 남은 것: 손재민 수동 위임 테스트 3종 · 서브에이전트 리뷰 (7~11 묶음)
