@@ -429,7 +429,17 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
                         ? 'bg-purple-50/60 border border-purple-200 border-l-4 border-l-purple-500 px-4 py-3 rounded-tl-md shadow-sm'
                         : 'bg-white border border-black/[0.05] px-4 py-3 rounded-tl-md shadow-sm'
                   }`}>
-                    {!isUser ? (
+                    {!isUser && parseKindCards(cleanDisplayContent(message.content || '')) ? (
+                      /* 본문 전체가 카드 묶음인 회차 — 코드블록이 아니라 pre 핸들러를 타지 않는다.
+                         모델이 ```json 없이 맨 JSON 으로 내보내는 경우가 있다(실측). */
+                      <div className="space-y-2">
+                        {parseKindCards(cleanDisplayContent(message.content || ''))!.map((c, i) => (
+                          <div key={`${message.id}-kc-${i}`}>
+                            {renderKindCardTop(c.kind, JSON.stringify(c.data), message.id, i)}
+                          </div>
+                        ))}
+                      </div>
+                    ) : !isUser ? (
                       <div className="markdown prose max-w-none text-text-primary">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
