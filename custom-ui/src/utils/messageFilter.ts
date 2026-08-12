@@ -92,12 +92,17 @@ const CARD_FENCE_MARKERS: readonly string[] = [
 
 /* 본문에 RAG 결과·exec 래퍼·시스템 덤프 마커가 하나라도 있으면 raw 덤프.
    한글 포함 여부와 무관하게 동작. */
+/* 서브에이전트는 카드를 ```json {"kind":"sr-table","data":{…}} 형태로도 낸다.
+   ```json 자체를 카드로 인정하면 평범한 JSON 응답까지 통과하므로 kind 키까지 확인한다. */
+const KIND_CARD_RE = /```json\s*\[?\s*\{\s*"kind"\s*:/;
+
 export function containsRawDumpMarker(content: string): boolean {
   if (!content) return false;
   /* 카드 fence가 있으면 raw 덤프로 취급 X */
   for (const m of CARD_FENCE_MARKERS) {
     if (content.includes(m)) return false;
   }
+  if (KIND_CARD_RE.test(content)) return false;
   for (const m of RAW_TOOL_MARKERS) {
     if (content.includes(m)) return true;
   }
@@ -180,6 +185,7 @@ export function shouldHideMessage(role: string, rawContent: string): boolean {
   }
 
   /* 3. assistant 메시지: raw 덤프 마커 / JSON 단독 응답 / BOOTSTRAP 누출 거름 */
+  if (KIND_CARD_RE.test(c)) return false;        // 카드 묶음은 무조건 통과
   if (containsRawDumpMarker(c)) return true;
   if (/^HEARTBEAT(_[A-Z]+)?\b/i.test(c)) return true;
   if (c === 'Source: memory/' || /^Source: memory\//.test(c)) return true;
