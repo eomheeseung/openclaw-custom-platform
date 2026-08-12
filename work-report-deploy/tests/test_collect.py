@@ -17,3 +17,14 @@ def test_tool_enabled_respects_config():
 def test_sr_is_never_enabled():
     """SR 은 설정에 있어도 무시 — 처리 담당자 구분 불가로 영구 제외"""
     assert tool_enabled(["dooray", "sr"], "sr") is False
+
+def test_github_requires_author_on_shared_repo():
+    """공용 저장소 — username 없으면 수집하지 않고 실패로 드러낸다 (타인 커밋 오염 방지)"""
+    from collect import collect_github
+    items, ok = collect_github("org", "repo", "2026-08-10", "2026-08-14", token="t", author=None)
+    assert items == [] and ok is False
+
+def test_github_unconfigured_is_not_failure():
+    from collect import collect_github
+    items, ok = collect_github(None, None, "2026-08-10", "2026-08-14")
+    assert items == [] and ok is True

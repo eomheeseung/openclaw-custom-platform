@@ -33,6 +33,33 @@ def group_by_business(items, businesses):
             for b in businesses]
 
 
+def parse_repo(spec, default_owner):
+    """'owner/repo' 또는 'repo' → (owner, repo). owner 생략 시 연동 페이지의 owner."""
+    spec = (spec or "").strip()
+    if not spec:
+        return None
+    if "/" in spec:
+        o, r = spec.split("/", 1)
+        return (o.strip(), r.strip())
+    return (default_owner, spec) if default_owner else None
+
+
+def gather_github_repos(businesses, gh_cfg):
+    """사업 마스터의 github_repos(→ biz_id 분류) + 개인 레포(쉼표 구분, 공통)."""
+    out = []
+    default_owner = gh_cfg.get("owner")
+    for b in businesses:
+        for spec in b.get("github_repos") or []:
+            pr = parse_repo(spec, default_owner)
+            if pr:
+                out.append((pr[0], pr[1], b["id"]))
+    for spec in (gh_cfg.get("repo") or "").split(","):
+        pr = parse_repo(spec, default_owner)
+        if pr:
+            out.append((pr[0], pr[1], None))
+    return out
+
+
 def find_unsourced(items):
     return [x for x in items if not x.get("sources")]
 
@@ -93,8 +120,9 @@ def build(nn, date_from, date_to):
                      or cfg.get("dooray_member_id"))
     gh_cfg = dict(cfg.get("github") or {})
     gh_integ = integ.get("github") or {}
-    for k in ("owner", "repo", "token"):
+    for k in ("owner", "repo", "token", "username"):
         gh_cfg.setdefault(k, gh_integ.get(k))
+    gh_cfg["repos"] = gather_github_repos(businesses, gh_cfg)
     items, stats, failures = collect(
         cfg.get("tools", []), businesses, date_from, date_to,
         member_id=dooray_member,

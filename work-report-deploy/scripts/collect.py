@@ -86,10 +86,13 @@ def collect_github(owner, repo, date_from, date_to, token=None, author=None):
     """외부 연동 페이지가 저장한 토큰(integrations.json)으로 직접 호출.
     컨테이너에 gh CLI 가 없으므로 curl 사용. author(깃헙 username)가 있으면 본인 커밋만."""
     if not owner or not repo or not token:
-        return [], True
-    q = f"since={date_from}T00:00:00Z&until={date_to}T23:59:59Z&per_page=50"
-    if author:
-        q += f"&author={author}"
+        return [], True          # 미설정 = 조회 안 함 (정상)
+    if not author:
+        # 공용 저장소에서 author 없이 긁으면 팀원 커밋까지 내 보고서에 섞인다
+        # (SR 을 제외한 것과 같은 이유). username 미설정은 실패로 드러낸다.
+        return [], False
+    q = (f"since={date_from}T00:00:00Z&until={date_to}T23:59:59Z"
+         f"&per_page=50&author={author}")
     cmd = (f'curl -s -m 30 -H "Authorization: Bearer {token}" '
            f'-H "Accept: application/vnd.github+json" '
            f'"https://api.github.com/repos/{owner}/{repo}/commits?{q}"')
@@ -150,9 +153,18 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
     if tool_enabled(tools, "drive"):
         take("drive", *collect_drive())
     if tool_enabled(tools, "github"):
+        # repos = [(owner, repo, biz_id), ...] — 사업 마스터의 github_repos 는 biz_id 로
+        # 분류되고([사업] 태그), 개인 연동 페이지의 레포는 biz_id=None(공통)으로 잡힌다.
         g = github or {}
-        take("github", *collect_github(g.get("owner"), g.get("repo"), date_from, date_to,
-                                       token=g.get("token"), author=g.get("username")))
+        got, ok_all = [], True
+        for owner, repo, biz in (g.get("repos") or []):
+            it, ok = collect_github(owner, repo, date_from, date_to,
+                                    token=g.get("token"), author=g.get("username"))
+            for x in it:
+                x["biz_id"] = biz
+            got += it
+            ok_all = ok_all and ok
+        take("github", got, ok_all)
     if tool_enabled(tools, "figma"):
         keys = []
         for b in businesses:

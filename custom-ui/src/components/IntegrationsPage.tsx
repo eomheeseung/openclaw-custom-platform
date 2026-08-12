@@ -11,6 +11,7 @@ export function IntegrationsPage() {
   const [ghOwner, setGhOwner] = useState('');
   const [ghToken, setGhToken] = useState('');
   const [ghRepo, setGhRepo] = useState('');
+  const [ghUsername, setGhUsername] = useState('');
   const [saving, setSaving] = useState('');
 
   const loadInt = useCallback(async () => {
@@ -57,7 +58,7 @@ export function IntegrationsPage() {
     try {
       const r = await fetch('/api/integrations/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ github: { owner: ghOwner.trim(), token: ghToken.trim(), repo: ghRepo.trim() }, userNN: getUserNN() }),
+        body: JSON.stringify({ github: { owner: ghOwner.trim(), token: ghToken.trim(), repo: ghRepo.trim(), username: ghUsername.trim() }, userNN: getUserNN() }),
       });
       const d = await r.json();
       if (d.ok) { setGhOwner(''); setGhToken(''); setGhRepo(''); await loadInt(); } else alert('저장 실패: ' + (d.error || ''));
@@ -70,7 +71,7 @@ export function IntegrationsPage() {
     try {
       const r = await fetch('/api/integrations/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ github: { owner: '', token: '', repo: '', updatedAt: '' }, userNN: getUserNN() }),
+        body: JSON.stringify({ github: { owner: '', token: '', repo: '', username: '', updatedAt: '' }, userNN: getUserNN() }),
       });
       const d = await r.json();
       if (d.ok) await loadInt(); else alert('실패: ' + (d.error || ''));
@@ -204,8 +205,14 @@ export function IntegrationsPage() {
                       className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-text-secondary block mb-1">Repository (선택)</label>
-                    <input type="text" value={ghRepo} onChange={(e) => setGhRepo(e.target.value)} placeholder="특정 저장소만 연동할 경우"
+                    <label className="text-xs font-medium text-text-secondary block mb-1">GitHub Username (본인 계정명)</label>
+                    <input type="text" value={ghUsername} onChange={(e) => setGhUsername(e.target.value)} placeholder="예: jaemin-son — 업무보고에서 본인 커밋만 집계할 때 필요"
+                      className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
+                    <p className="text-[11px] text-text-secondary mt-1">공용 저장소에서 팀원 커밋이 섞이지 않도록 본인 커밋만 골라냅니다.</p>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-text-secondary block mb-1">Repository (선택 · 쉼표로 여러 개)</label>
+                    <input type="text" value={ghRepo} onChange={(e) => setGhRepo(e.target.value)} placeholder="예: repo-a, other-org/repo-b — 사업 소속 레포는 관리자가 사업에 등록"
                       className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
                   </div>
                   <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors" disabled={saving === 'github'} onClick={saveGithub}>

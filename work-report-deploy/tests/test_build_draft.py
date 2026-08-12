@@ -43,3 +43,20 @@ def test_carryover_done_absorbs():
     prev_next = [{"text": "로그인 오류 조치", "status": "next"}]
     out = apply_carryover([_it("로그인 오류 조치", "b1", status="done")], prev_next)
     assert len(out) == 1 and not out[0].get("carry")
+
+def test_parse_repo_forms():
+    from build_draft import parse_repo
+    assert parse_repo("tideflo/e-jinro-web", None) == ("tideflo", "e-jinro-web")
+    assert parse_repo("myrepo", "tideflo") == ("tideflo", "myrepo")
+    assert parse_repo("", "tideflo") is None
+    assert parse_repo("solo", None) is None   # owner 도 없으면 스킵
+
+def test_gather_repos_business_and_personal():
+    from build_draft import gather_github_repos
+    bs = [{"id": "b1", "github_repos": ["tideflo/e-jinro-web", "e-jinro-admin"]}]
+    gh = {"owner": "tideflo", "repo": "personal-a, other/perso-b"}
+    out = gather_github_repos(bs, gh)
+    assert ("tideflo", "e-jinro-web", "b1") in out
+    assert ("tideflo", "e-jinro-admin", "b1") in out
+    assert ("tideflo", "personal-a", None) in out
+    assert ("other", "perso-b", None) in out
