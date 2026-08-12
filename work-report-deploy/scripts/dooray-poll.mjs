@@ -8,7 +8,7 @@
  *
  * 왜 `chat.send` 인가: `/hooks/agent` 는 격리 세션에서 돌고 결과만 메인에 통지한다(실측).
  *   그러면 카드가 웹 UI 대화창에 뜨지 않는다. 웹 UI 와 똑같이 WebSocket `chat.send` 로 넣어야
- *   사용자가 웹에서 직접 친 것과 동일해진다 (세션 `agent:secretary:main` 고정).
+ *   사용자가 웹에서 직접 친 것과 동일해진다 (세션 `agent:secretary:dooray` 고정 — 사이드바에 뜬다).
  *
  * 회신은 하지 않는다 — 비서가 BOOTSTRAP 규칙에 따라 notify.py 로 두레이에 답한다.
  *   데몬이 응답까지 맡으면 카드 판단·요약을 데몬이 하게 되어 역할이 겹친다.
@@ -22,7 +22,10 @@ const WebSocket = require("ws");
 
 const DATA = "/opt/openclaw/data";
 const PREFIX = "..";                 // `/` 는 두레이 슬래시 커맨드 팝업과 겹쳐서 제외
-const SESSION_KEY = "agent:secretary:main";
+// `:main` 은 쓰지 않는다 — 웹 UI 가 사이드바에서 의도적으로 숨긴다
+// (Sidebar.tsx: ":main 진입점 세션은 숨김 — cron/mention 자동 메시지 누적 컨테이너 역할만").
+// main 으로 보내면 대화가 사용자 눈에 보이지 않는다(실측).
+const SESSION_KEY = "agent:secretary:dooray";
 const IDLE_MS = 60_000;              // 평소 주기
 const ACTIVE_MS = 5_000;             // 최근 대화가 있으면 촘촘히
 const ACTIVE_WINDOW_MS = 5 * 60_000; // '최근' 의 기준
