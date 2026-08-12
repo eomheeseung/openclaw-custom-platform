@@ -17,6 +17,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
+import week_util
+from datetime import datetime
 
 BOT_NAME = "TideClaw"
 DIRECT_SEND = "https://api.dooray.com/messenger/v1/channels/direct-send"
@@ -76,10 +78,57 @@ def notify(nn, text):
     return False, "두레이 미연동"
 
 
+def draft_summary(nn, week_label_fn=None):
+    """초안 파일에서 회신문을 **기계적으로** 만든다.
+
+    ⚠ 모델이 요약을 새로 쓰면 한글이 깨진다(실측: 주간업무보고 → 주간업묳보고).
+    항목 문구는 파일에 있는 그대로 인용하고, 숫자와 링크만 붙인다."""
+    base = paths.data_dir(nn)
+    week = week_util.week_label(datetime.now().strftime("%Y-%m-%d"))
+    path = f"{base}/work-report/drafts/draft-{week}.json"
+    try:
+        d = json.load(open(path))
+    except Exception:
+        return None
+    done, rest = [], []
+    for grp in list(d.get("businesses") or []) + [{"items": d.get("common") or []}]:
+        for it in grp.get("items") or []:
+            (done if it.get("status") == "done" else rest).append(it.get("text", ""))
+    link = (f"http://claw.tideflo.work/chat/secretary/"
+            f"dooray-{week}?token=".lower() + _gateway_token(nn))
+    lines = [f"이번 주 주간보고 초안 ({d.get('period','')})",
+             f"완료 {len(done)}건" + (f" · 진행/차주 {len(rest)}건" if rest else "")]
+    for t in done[:5]:
+        lines.append(f"· {t}")
+    if len(done) > 5:
+        lines.append(f"· 외 {len(done) - 5}건")
+    for t in rest[:3]:
+        lines.append(f"· (진행) {t}")
+    if d.get("failures"):
+        lines.append(f"※ 수집 실패: {', '.join(d['failures'])}")
+    lines.append(f"확인: {link}")
+    return "\n".join(lines)
+
+
+def _gateway_token(nn):
+    try:
+        return (json.load(open(f"{paths.data_dir(nn)}/openclaw.json"))
+                .get("gateway", {}).get("auth", {}).get("token", ""))
+    except Exception:
+        return ""
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("사용법: notify.py <userNN> <메시지>")
+        print("사용법: notify.py <userNN> <메시지>  |  notify.py <userNN> --draft")
         sys.exit(2)
-    ok, info = notify(sys.argv[1], " ".join(sys.argv[2:]))
+    if sys.argv[2] == "--draft":
+        msg = draft_summary(sys.argv[1])
+        if not msg:
+            print(json.dumps({"ok": False, "via": "초안 파일 없음"}, ensure_ascii=False))
+            sys.exit(1)
+        ok, info = notify(sys.argv[1], msg)
+    else:
+        ok, info = notify(sys.argv[1], " ".join(sys.argv[2:]))
     print(json.dumps({"ok": ok, "via": info}, ensure_ascii=False))
     sys.exit(0 if ok else 1)

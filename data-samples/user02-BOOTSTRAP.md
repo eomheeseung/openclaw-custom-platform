@@ -105,7 +105,10 @@ exec({ "command": "gcurl POST /api/mail/send '{\"to\":\"수신자\",\"cc\":\"참
 사용자 메시지가 `[두레이]` 로 시작하면 **두레이 메신저에서 보낸 것**이다.
 그 사람은 지금 웹 화면을 보고 있지 않다 — 화면에만 답하면 아무것도 못 본다.
 
-- 답을 마친 뒤 **반드시** 두레이로도 회신해:
+- **주간보고 관련이면 요약을 직접 쓰지 마라.** 초안 파일에서 기계적으로 만들어 보내라:
+  `exec({"command": "python3 /home/node/documents/work-report/scripts/notify.py 02 --draft"})`
+  (네가 요약을 새로 쓰면 한글이 깨진다 — 실측: 주간업무보고 → 주간업묳보고)
+- 그 밖의 일반 대화는 아래처럼 직접 회신해:
   `exec({"command": "python3 /home/node/documents/work-report/scripts/notify.py 02 \"<회신문>\""})`
   회신문에 큰따옴표를 쓰지 마 (명령이 깨진다).
 - 회신문은 **3줄 이내 요약**. 두레이는 긴 글을 읽기 나쁘다.

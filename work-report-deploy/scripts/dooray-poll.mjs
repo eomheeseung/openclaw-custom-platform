@@ -53,9 +53,11 @@ function webLink(nn, week) {
   const tail = `dooray-${week}`.toLowerCase();
   return `http://claw.tideflo.work/chat/secretary/${tail}${token ? `?token=${token}` : ""}`;
 }
-const IDLE_MS = 60_000;              // 평소 주기
-const ACTIVE_MS = 5_000;             // 최근 대화가 있으면 촘촘히
-const ACTIVE_WINDOW_MS = 5 * 60_000; // '최근' 의 기준
+// 두레이 호출 제한은 계정 단위 burst 20 / 초당 5회 충전.
+// 15초 주기 × 14명 = 0.93회/초 → 한도의 19%. 여유가 있으니 응답성을 택한다.
+const IDLE_MS = 15_000;               // 평소에도 15초 안에는 잡는다
+const ACTIVE_MS = 5_000;              // 대화 중이면 더 촘촘히
+const ACTIVE_WINDOW_MS = 30 * 60_000; // 5분은 짧다 — 답 받고 6분 뒤 물으면 느려졌다(실측)
 const API = "https://api.dooray.com/messenger/v1/channels";
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
