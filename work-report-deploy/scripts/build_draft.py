@@ -84,10 +84,21 @@ def build(nn, date_from, date_to):
     master = paths.load_businesses()
     businesses = [b for b in master if nn in (b.get("members") or [])]
 
+    # 외부 연동 페이지가 저장한 토큰·memberId (integrations.json) 를 우선 사용
+    try:
+        integ = json.load(open(f"{base}/integrations.json"))
+    except Exception:
+        integ = {}
+    dooray_member = ((integ.get("dooray") or {}).get("memberId")
+                     or cfg.get("dooray_member_id"))
+    gh_cfg = dict(cfg.get("github") or {})
+    gh_integ = integ.get("github") or {}
+    for k in ("owner", "repo", "token"):
+        gh_cfg.setdefault(k, gh_integ.get(k))
     items, stats, failures = collect(
         cfg.get("tools", []), businesses, date_from, date_to,
-        member_id=cfg.get("dooray_member_id"),
-        github=cfg.get("github"),
+        member_id=dooray_member,
+        github=gh_cfg,
         figma_name=(cfg.get("profile") or {}).get("name"))
     items = merge_duplicates(items)
     items = compress_minor(items)

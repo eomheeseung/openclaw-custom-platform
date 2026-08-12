@@ -82,11 +82,17 @@ def collect_drive(days=7):
     return items, ok
 
 
-def collect_github(owner, repo, date_from, date_to):
-    if not owner or not repo:
+def collect_github(owner, repo, date_from, date_to, token=None, author=None):
+    """외부 연동 페이지가 저장한 토큰(integrations.json)으로 직접 호출.
+    컨테이너에 gh CLI 가 없으므로 curl 사용. author(깃헙 username)가 있으면 본인 커밋만."""
+    if not owner or not repo or not token:
         return [], True
-    cmd = (f'gh api "/repos/{owner}/{repo}/commits'
-           f'?author=@me&since={date_from}T00:00:00Z&until={date_to}T23:59:59Z" 2>/dev/null')
+    q = f"since={date_from}T00:00:00Z&until={date_to}T23:59:59Z&per_page=50"
+    if author:
+        q += f"&author={author}"
+    cmd = (f'curl -s -m 30 -H "Authorization: Bearer {token}" '
+           f'-H "Accept: application/vnd.github+json" '
+           f'"https://api.github.com/repos/{owner}/{repo}/commits?{q}"')
     try:
         out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout
         rows = json.loads(out)
@@ -145,7 +151,8 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
         take("drive", *collect_drive())
     if tool_enabled(tools, "github"):
         g = github or {}
-        take("github", *collect_github(g.get("owner"), g.get("repo"), date_from, date_to))
+        take("github", *collect_github(g.get("owner"), g.get("repo"), date_from, date_to,
+                                       token=g.get("token"), author=g.get("username")))
     if tool_enabled(tools, "figma"):
         keys = []
         for b in businesses:
