@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """툴별 수집 → 정규화 항목 + 건수 + 실패 목록.
 
-⚠ SR 영구 제외: 목록 컬럼(sr_no·title·requester·status·…)에 처리 담당자가 없어
-  같은 사업 타인의 처리 건이 섞인다. SR 은 사업 주간보고(기관 제출용) 전용.
-⚠ 실패를 드러낸다: 미연동/실패 시 CLI 가 에러 대신 사용법 안내문을 뱉어
-  '조용한 누락'이 되므로, 호출 실패는 failures 로 반환해 카드 배지로 띄운다.
+설계(B안): 사업 매핑을 위한 사전 등록을 요구하지 않는다.
+  - 두레이: `dooray projects` 로 내 프로젝트를 **자동 발견**하고, 항목에 project/project_id 를 실어
+    classify.py 가 이름 유사도로 사업에 붙인다.
+  - 드라이브: 공유 드라이브 목록을 받아 파일의 parents 와 대조 (best effort).
+  - 깃헙: org 단위 검색 — 레포를 하나하나 등록할 필요 없음.
+
+⚠ SR 영구 제외: 목록 컬럼(sr_no·title·requester·…)에 처리 담당자가 없어 타인 처리 건이 섞인다.
+⚠ 실패를 드러낸다: 미연동/실패 시 CLI 가 에러 대신 사용법 안내문을 뱉어 '조용한 누락'이 되므로,
+  호출 실패는 failures 로 반환해 카드 배지로 띄운다.
 """
 import json
 import subprocess
@@ -19,13 +24,15 @@ def tool_enabled(tools, name):
     return name in (tools or [])
 
 
-def normalize_item(raw, source, biz_id=None, url=None, status="done"):
+def normalize_item(raw, source, biz_id=None, url=None, status="done", **extra):
     text = (raw.get("subject") or raw.get("title") or raw.get("name")
             or raw.get("summary") or "").strip()
     at = (raw.get("updatedAt") or raw.get("date") or raw.get("modified")
           or raw.get("start") or "")
-    return {"text": text, "source": source, "url": url,
-            "biz_id": biz_id, "at": at, "status": status}
+    it = {"text": text, "source": source, "url": url,
+          "biz_id": biz_id, "at": at, "status": status}
+    it.update(extra)          # project / project_id / repo — classify 가 매핑에 씀
+    return it
 
 
 def _run(cmd):
@@ -41,18 +48,29 @@ def _run(cmd):
         return False, {}
 
 
-def collect_dooray(biz, member_id):
-    pid = biz.get("dooray_project_id")
-    if not pid:
-        return [], True
-    member = member_id or ""  # dooray CLI 는 memberIds 생략 시 본인 담당 자동
-    items, ok_all = [], True
-    for status, mapped in (("done", "done"), ("working", "wip")):
-        ok, d = _run(f"dooray tasks {pid} 50 {status} {member}".strip())
-        ok_all = ok_all and ok
-        for t in d.get("tasks", []):
-            url = f"https://tideflo.dooray.com/task/{pid}/{t.get('id')}"
-            items.append(normalize_item(t, "dooray", biz["id"], url, mapped))
+def dooray_projects():
+    """내가 속한 프로젝트 자동 발견. 관리자가 프로젝트 ID 를 등록할 필요가 없다."""
+    ok, d = _run("dooray projects")
+    if not ok:
+        return [], False
+    return [p for p in d.get("projects", []) if p.get("state") != "archived"], True
+
+
+def collect_dooray(member_id=None):
+    projects, ok_all = dooray_projects()
+    if not ok_all:
+        return [], False
+    member = member_id or ""      # 생략 시 CLI 가 본인 담당 자동 적용
+    items = []
+    for p in projects:
+        pid, pname = p.get("id"), p.get("name")
+        for status, mapped in (("done", "done"), ("working", "wip")):
+            ok, d = _run(f"dooray tasks {pid} 50 {status} {member}".strip())
+            ok_all = ok_all and ok
+            for t in d.get("tasks", []):
+                url = f"https://tideflo.dooray.com/task/{pid}/{t.get('id')}"
+                items.append(normalize_item(t, "dooray", None, url, mapped,
+                                            project=pname, project_id=pid))
     return items, ok_all
 
 
@@ -74,31 +92,38 @@ def collect_calendar(days=7):
 
 
 def collect_drive(days=7):
+    """공유 드라이브명을 컨테이너로 삼아 매핑 (parents 가 드라이브 루트인 경우).
+    그 외 파일은 파일명 키워드 / LLM 보정에 맡긴다."""
+    ok_s, ds = _run("gog drive shared")
+    drive_names = {d.get("id"): d.get("name") for d in ds.get("drives", [])} if ok_s else {}
     ok, d = _run(f"gog drive recent {days}")
     items = []
     for f in d.get("files", []):
         url = f"https://drive.google.com/file/d/{f.get('id')}/view"
-        items.append(normalize_item(f, "drive", None, url, "done"))
+        container = None
+        for parent in f.get("parents") or []:
+            if parent in drive_names:
+                container = drive_names[parent]
+                break
+        items.append(normalize_item(f, "drive", None, url, "done", project=container))
     return items, ok
 
 
-def collect_github(owner, repo, date_from, date_to, token=None, author=None):
-    """외부 연동 페이지가 저장한 토큰(integrations.json)으로 직접 호출.
-    컨테이너에 gh CLI 가 없으므로 curl 사용. author(깃헙 username)가 있으면 본인 커밋만."""
-    if not owner or not repo or not token:
-        return [], True          # 미설정 = 조회 안 함 (정상)
+def collect_github(owner, date_from, date_to, token=None, author=None):
+    """org 단위 커밋 검색 — 레포를 등록할 필요 없음.
+    author(본인 username) 는 필수: 공용 저장소에서 생략하면 팀원 커밋이 섞인다."""
+    if not owner or not token:
+        return [], True                 # 미설정 = 조회 안 함 (정상)
     if not author:
-        # 공용 저장소에서 author 없이 긁으면 팀원 커밋까지 내 보고서에 섞인다
-        # (SR 을 제외한 것과 같은 이유). username 미설정은 실패로 드러낸다.
-        return [], False
-    q = (f"since={date_from}T00:00:00Z&until={date_to}T23:59:59Z"
-         f"&per_page=50&author={author}")
+        return [], False                # 공용 저장소 오염 방지 — 실패로 드러냄
+    q = f"org:{owner}+author:{author}+author-date:{date_from}..{date_to}"
     cmd = (f'curl -s -m 30 -H "Authorization: Bearer {token}" '
            f'-H "Accept: application/vnd.github+json" '
-           f'"https://api.github.com/repos/{owner}/{repo}/commits?{q}"')
+           f'"https://api.github.com/search/commits?q={q}&per_page=50"')
     try:
         out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout
-        rows = json.loads(out)
+        d = json.loads(out)
+        rows = d.get("items")
         if not isinstance(rows, list):
             return [], False
     except Exception:
@@ -106,15 +131,16 @@ def collect_github(owner, repo, date_from, date_to, token=None, author=None):
     items = []
     for c in rows:
         msg = (c.get("commit") or {}).get("message", "").split("\n")[0]
+        repo = ((c.get("repository") or {}).get("name") or "")
         items.append(normalize_item(
             {"title": msg, "date": (c.get("commit") or {}).get("author", {}).get("date")},
-            "github", None, c.get("html_url"), "done"))
+            "github", None, c.get("html_url"), "done", repo=repo))
     return items, True
 
 
 def collect_figma(file_keys, member_name):
     """등록 파일의 버전 이력에서 본인 것만.
-    ⚠ figma CLI 는 아직 미배포 — file_keys 가 비어 있는 동안은 휴면 (호출 안 됨)."""
+    ⚠ figma CLI 미배포 — file_keys 가 비어 있는 동안은 휴면 (호출 안 됨)."""
     items, ok_all = [], True
     for key in file_keys or []:
         ok, d = _run(f"figma versions {key}")
@@ -140,12 +166,7 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
             failures.append(name)
 
     if tool_enabled(tools, "dooray"):
-        got, ok = [], True
-        for b in businesses:
-            g, o = collect_dooray(b, member_id)
-            got += g
-            ok = ok and o
-        take("dooray", got, ok)
+        take("dooray", *collect_dooray(member_id))
     if tool_enabled(tools, "gmail"):
         take("gmail", *collect_gmail(date_from, date_to))
     if tool_enabled(tools, "calendar"):
@@ -153,18 +174,9 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
     if tool_enabled(tools, "drive"):
         take("drive", *collect_drive())
     if tool_enabled(tools, "github"):
-        # repos = [(owner, repo, biz_id), ...] — 사업 마스터의 github_repos 는 biz_id 로
-        # 분류되고([사업] 태그), 개인 연동 페이지의 레포는 biz_id=None(공통)으로 잡힌다.
         g = github or {}
-        got, ok_all = [], True
-        for owner, repo, biz in (g.get("repos") or []):
-            it, ok = collect_github(owner, repo, date_from, date_to,
-                                    token=g.get("token"), author=g.get("username"))
-            for x in it:
-                x["biz_id"] = biz
-            got += it
-            ok_all = ok_all and ok
-        take("github", got, ok_all)
+        take("github", *collect_github(g.get("owner"), date_from, date_to,
+                                       token=g.get("token"), author=g.get("username")))
     if tool_enabled(tools, "figma"):
         keys = []
         for b in businesses:

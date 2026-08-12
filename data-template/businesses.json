@@ -8,7 +8,12 @@
       "org": "대한체육회",
       "dooray_project_id": "4332881555667186223",
       "figma_file_keys": [],
-      "members": ["02", "13"]
+      "members": [
+        "02",
+        "13"
+      ],
+      "github_repos": [],
+      "_note": "필수: name·alias·members / 선택: dooray_project_id·github_repos·figma_file_keys (자동매칭 실패 시에만)"
     },
     {
       "id": "biz-smoking",
@@ -17,7 +22,23 @@
       "org": "한국건강증진개발원",
       "dooray_project_id": "",
       "figma_file_keys": [],
-      "members": ["13"]
+      "members": [
+        "13"
+      ],
+      "github_repos": [],
+      "_note": "필수: name·alias·members / 선택: dooray_project_id·github_repos·figma_file_keys (자동매칭 실패 시에만)"
+    },
+    {
+      "id": "biz-mtvs",
+      "name": "가상융합기술 아카데미",
+      "alias": "가상융합",
+      "org": "과기정통부",
+      "members": [
+        "13"
+      ],
+      "dooray_project_id": "",
+      "github_repos": [],
+      "figma_file_keys": []
     }
   ]
 }

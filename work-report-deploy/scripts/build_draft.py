@@ -14,6 +14,7 @@ from datetime import datetime
 
 import paths
 import run_log
+from classify import classify
 from collect import collect
 from dedupe import merge_duplicates, compress_minor, similarity
 from week_util import week_label, prev_week_label
@@ -31,33 +32,6 @@ def group_by_business(items, businesses):
     return [{"id": b["id"], "name": b["name"], "alias": b.get("alias", b["name"]),
              "items": [x for x in items if x.get("biz_id") == b["id"]]}
             for b in businesses]
-
-
-def parse_repo(spec, default_owner):
-    """'owner/repo' 또는 'repo' → (owner, repo). owner 생략 시 연동 페이지의 owner."""
-    spec = (spec or "").strip()
-    if not spec:
-        return None
-    if "/" in spec:
-        o, r = spec.split("/", 1)
-        return (o.strip(), r.strip())
-    return (default_owner, spec) if default_owner else None
-
-
-def gather_github_repos(businesses, gh_cfg):
-    """사업 마스터의 github_repos(→ biz_id 분류) + 개인 레포(쉼표 구분, 공통)."""
-    out = []
-    default_owner = gh_cfg.get("owner")
-    for b in businesses:
-        for spec in b.get("github_repos") or []:
-            pr = parse_repo(spec, default_owner)
-            if pr:
-                out.append((pr[0], pr[1], b["id"]))
-    for spec in (gh_cfg.get("repo") or "").split(","):
-        pr = parse_repo(spec, default_owner)
-        if pr:
-            out.append((pr[0], pr[1], None))
-    return out
 
 
 def find_unsourced(items):
@@ -122,12 +96,12 @@ def build(nn, date_from, date_to):
     gh_integ = integ.get("github") or {}
     for k in ("owner", "repo", "token", "username"):
         gh_cfg.setdefault(k, gh_integ.get(k))
-    gh_cfg["repos"] = gather_github_repos(businesses, gh_cfg)
     items, stats, failures = collect(
         cfg.get("tools", []), businesses, date_from, date_to,
         member_id=dooray_member,
         github=gh_cfg,
         figma_name=(cfg.get("profile") or {}).get("name"))
+    items = classify(items, businesses)   # 사업 매핑: 등록ID → 프로젝트명 유사도 → 별칭 키워드
     items = merge_duplicates(items)
     items = compress_minor(items)
     items = apply_carryover(items, _load_prev_next(nn, date_from))
