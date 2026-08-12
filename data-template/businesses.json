@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "businesses": [
+    {
+      "id": "biz-sports",
+      "name": "대한체육회 e진로지원센터",
+      "alias": "e진로",
+      "org": "대한체육회",
+      "dooray_project_id": "4332881555667186223",
+      "figma_file_keys": [],
+      "members": ["02", "13"]
+    },
+    {
+      "id": "biz-smoking",
+      "name": "금연서비스 통합정보시스템",
+      "alias": "금연서비스",
+      "org": "한국건강증진개발원",
+      "dooray_project_id": "",
+      "figma_file_keys": [],
+      "members": ["13"]
+    }
+  ]
+}

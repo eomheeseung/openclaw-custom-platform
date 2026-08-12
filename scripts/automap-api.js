@@ -907,6 +907,45 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* GET /api/work-report/businesses — 사업 마스터 (공용 · 관리자가 파일로 관리) */
+  if (req.method === 'GET' && url.pathname === '/api/work-report/businesses') {
+    try {
+      const d = JSON.parse(fs.readFileSync('/opt/openclaw/data/businesses.json', 'utf8'));
+      jsonRes(res, 200, { ok: true, businesses: d.businesses || [] });
+    } catch (e) { jsonRes(res, 500, { ok: false, error: e.message }); }
+    return;
+  }
+
+  /* GET /api/work-report/config — 개인 설정 + 내 담당 사업(마스터 역참조) */
+  if (req.method === 'GET' && url.pathname === '/api/work-report/config') {
+    const nn = resolveUserNN(req, url);
+    if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const cfg = JSON.parse(fs.readFileSync(`/opt/openclaw/data/user${nn}/work-report/config.json`, 'utf8'));
+      const master = JSON.parse(fs.readFileSync('/opt/openclaw/data/businesses.json', 'utf8'));
+      const mine = (master.businesses || []).filter(b => (b.members || []).includes(nn));
+      jsonRes(res, 200, { ok: true, config: cfg, businesses: mine });
+    } catch (e) { jsonRes(res, 500, { ok: false, error: e.message }); }
+    return;
+  }
+
+  /* PUT /api/work-report/config — tools·recipients·schedule·profile 만 (담당 사업은 관리자 전용) */
+  if (req.method === 'PUT' && url.pathname === '/api/work-report/config') {
+    const nn = resolveUserNN(req, url);
+    if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    readBody(req).then(body => {
+      const p = `/opt/openclaw/data/user${nn}/work-report/config.json`;
+      const cur = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (Array.isArray(body.tools)) cur.tools = body.tools.filter(t => t !== 'sr');  /* SR 영구 차단 */
+      if (body.recipients) cur.recipients = body.recipients;
+      if (body.schedule) cur.schedule = body.schedule;
+      if (body.profile) cur.profile = body.profile;
+      fs.writeFileSync(p, JSON.stringify(cur, null, 2));
+      jsonRes(res, 200, { ok: true, config: cur });
+    }).catch(e => jsonRes(res, 500, { ok: false, error: e.message }));
+    return;
+  }
+
   // GET /api/admin/keys — Moonshot 멀티키 상태 (마스킹 + live/suspended 체크)
   if (req.method === 'GET' && url.pathname === '/api/admin/keys') {
     const auth = getAuthSession(req);
