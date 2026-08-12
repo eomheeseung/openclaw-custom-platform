@@ -41,7 +41,40 @@ function isoWeek(now = new Date()) {
   return `${year}-W${String(week).padStart(2, "0")}`;
 }
 
-const sessionKeyFor = (week) => `${SESSION_PREFIX}${week}`;
+const sessionKeyFor = (week, agentId = "secretary") =>
+  `agent:${agentId}:dooray-${week}`;
+
+/* 문장에 담당 에이전트 이름이 들어 있으면 그 에이전트 세션으로 바로 보낸다.
+   화면과 같은 규칙(utils/agentRouting.ts) — 비서를 거치면 위임 결과를 자기 말로 다시 써서
+   카드·소속·수신자가 뒤바뀐다(실측). 두레이도 같은 경로를 타야 결과가 같다.
+   키워드 표를 두지 않는다: 에이전트 이름이 곧 사람들이 쓰는 말이라 등록이 필요 없다. */
+const normKo = (x) => (x || "").toLowerCase().replace(/[\s()[\]·・,.\-_/]+/g, "");
+
+function agentsOf(nn) {
+  const cfg = readJson(`${DATA}/user${nn}/openclaw.json`);
+  // 별칭은 별도 파일 — openclaw.json 에 넣으면 스키마 검증이 거부한다(실측: 재시작 루프)
+  const alias = readJson(`${DATA}/user${nn}/agent-aliases.json`, {}) || {};
+  return ((cfg?.agents?.list) || [])
+    .filter((a) => a?.id && !a.default)
+    .map((a) => ({ ...a, aliases: Array.isArray(alias[a.id]) ? alias[a.id] : [] }));
+}
+
+function resolveAgent(nn, text) {
+  const flat = normKo(text);
+  let best = null, bestLen = 0;
+  for (const a of agentsOf(nn)) {
+    const name = a.identity?.name || a.name || a.id;
+    const core = String(name).replace(/[(（].*?[)）]/g, "").trim();   // "사업 주간보고 (기관 제출용)" → "사업 주간보고"
+    for (const cand of [core, name, ...(a.aliases || [])]) {
+      const key = normKo(cand);
+      if (key.length >= 2 && flat.includes(key) && key.length > bestLen) {
+        best = a.id;
+        bestLen = key.length;
+      }
+    }
+  }
+  return best;
+}
 const sessionLabelFor = (week) => `두레이 대화 · ${week}`;
 
 /** 두레이에서 웹으로 건너올 링크 — 해당 주차 대화가 바로 열린다.
@@ -206,9 +239,17 @@ async function pollUser(u, state) {
       `   ${webLink(u.nn, isoWeek())}`,
     ].join("\n");
     const week = isoWeek();
-    const labelIfNew = state.labeledWeek === week ? null : sessionLabelFor(week);
-    const ok = await sendToSession(u.nn, body, sessionKeyFor(week), labelIfNew);
-    if (ok && labelIfNew) state.labeledWeek = week;   // 이름 지정은 주에 한 번이면 된다
+    const agentId = resolveAgent(u.nn, text) || "secretary";
+    const key = sessionKeyFor(week, agentId);
+    // 이름표는 세션마다 한 번씩
+    const labeled = state.labeledKeys || {};
+    const labelIfNew = labeled[key] ? null : sessionLabelFor(week);
+    const ok = await sendToSession(u.nn, body, key, labelIfNew);
+    if (ok && labelIfNew) {
+      labeled[key] = true;
+      state.labeledKeys = labeled;
+    }
+    if (agentId !== "secretary") log(`user${u.nn} → ${agentId} 로 직행`);
     log(`user${u.nn} seq${m.seq} → ${ok ? "투입" : "실패"}: ${text.slice(0, 40)}`);
   }
 }
