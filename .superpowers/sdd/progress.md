@@ -10,3 +10,7 @@
 - master 브랜치 직접 사용 (이 저장소 관행)
 
 ## 완료
+- Task 1: complete (commits c63f384..10b353e, review clean)
+  - 배포 스캐폴딩 4파일 + user02 에이전트 등록
+  - 리뷰 Important #1(원자적 쓰기) 수정 완료 · #2(AGENTS.md 자동갱신)는 watch-agents.sh 정상동작으로 확인, 수정 불필요
+  - Minor 기록(최종 리뷰에서 판단): chmod 777/666 관행 · NN 형식검증 부재 · unenroll 데이터보존 문서화 부족
