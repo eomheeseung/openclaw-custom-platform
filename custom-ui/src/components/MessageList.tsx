@@ -175,6 +175,26 @@ const BizPickerCard = memo(function BizPickerCard({
 /* draft-card 검증 기준: 그 카드보다 앞에 있는 가장 가까운 sr-table.
    "가장 가까운" 이어야 여러 주차를 한 세션에서 만들어도 해당 라운드 것과 대조됨.
    못 찾으면 null → 검증 생략 (컨텍스트 압축으로 잘렸거나 sr-table 없는 흐름) */
+/* 서브에이전트가 내는 카드 묶음: [{"kind":"sr-table","data":{…}}, …] (단일 객체도 허용).
+   kind 가 우리가 아는 카드가 아니면 null 을 돌려 평범한 코드블록으로 남긴다. */
+const KIND_CARDS = new Set([
+  'biz-picker', 'sr-table', 'week-picker', 'grouping-editor',
+  'draft-card', 'download-card', 'work-draft', 'tool-pick',
+]);
+
+function parseKindCards(raw: string): Array<{ kind: string; data: unknown }> | null {
+  try {
+    const parsed = JSON.parse(raw);
+    const arr = Array.isArray(parsed) ? parsed : [parsed];
+    if (!arr.length) return null;
+    const cards = arr.filter((x): x is { kind: string; data: unknown } =>
+      !!x && typeof x === 'object' && typeof x.kind === 'string' && 'data' in x && KIND_CARDS.has(x.kind));
+    return cards.length === arr.length ? cards : null;
+  } catch {
+    return null;
+  }
+}
+
 function findSrBaselineBefore(msgs: Message[], idx: number): SrBaselineItem[] | null {
   for (let i = idx - 1; i >= 0; i--) {
     const m = msgs[i];
@@ -402,11 +422,40 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
                           remarkPlugins={[remarkGfm]}
                           rehypePlugins={[rehypeHighlight, rehypeRaw]}
                           components={{
+                            /* eslint-disable @typescript-eslint/no-explicit-any */
                             pre: ({ children }) => {
                               const child = children as any;
                               const cls: string = child?.props?.className || '';
                               if (typeof cls === 'string') {
                                 const raw = String(child.props.children || '').trim();
+                                /* 서브에이전트는 카드를 ```json [{"kind":"sr-table","data":{…}}] 형태로 낸다.
+                                   원래는 비서가 이걸 풀어 ```<kind> 로 재발행하기로 했는데 하지 않는다(실측).
+                                   멘션으로 직접 부르면 재발행할 비서가 아예 없다 — 화면이 이 형태도 알아본다. */
+                                const renderKindCard = (kind: string, data: string, mid: string, i: number) => {
+                                  if (kind === 'biz-picker')      return <BizPickerCard raw={data} onSelect={onSendMessage} onIntentPick={onIntentPick} />;
+                                  if (kind === 'sr-table')         return <SrTableCard raw={data} />;
+                                  if (kind === 'week-picker')      return <WeekPickerCard raw={data} onSelect={onSendMessage} />;
+                                  if (kind === 'grouping-editor')  return <GroupingEditorCard raw={data} onSelect={onSendMessage} messageId={`${mid}-${i}`} />;
+                                  if (kind === 'draft-card')       return <DraftCard raw={data} onSelect={onSendMessage} onPrefill={onPrefill} srBaseline={findSrBaselineBefore(filtered, idx)} confirmedGroups={findGroupingConfirmBefore(filtered, idx)} />;
+                                  if (kind === 'download-card')    return <DownloadCard raw={data} onSelect={onSendMessage} />;
+                                  if (kind === 'work-draft')       return <WorkDraftCard raw={data} onSelect={onSendMessage} />;
+                                  if (kind === 'tool-pick')        return <ToolPickCard raw={data} onSelect={onSendMessage} />;
+                                  return null;
+                                };
+                                if (cls.includes('language-json')) {
+                                  const cards = parseKindCards(raw);
+                                  if (cards) {
+                                    return (
+                                      <>
+                                        {cards.map((c, i) => (
+                                          <div key={`${message.id}-kind-${i}`}>
+                                            {renderKindCard(c.kind, JSON.stringify(c.data), message.id, i)}
+                                          </div>
+                                        ))}
+                                      </>
+                                    );
+                                  }
+                                }
                                 if (cls.includes('language-biz-picker'))       return <BizPickerCard raw={raw} onSelect={onSendMessage} onIntentPick={onIntentPick} />;
                                 if (cls.includes('language-sr-table'))         return <SrTableCard raw={raw} />;
                                 if (cls.includes('language-week-picker'))      return <WeekPickerCard raw={raw} onSelect={onSendMessage} />;
