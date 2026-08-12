@@ -71,3 +71,19 @@ def test_draft_carries_profile_and_recipients(tmp_path, monkeypatch):
     assert draft["profile"]["team"] == "전략사업팀"
     assert draft["profile"]["title"] == "매니저"
     assert draft["recipients"]["to"] == ["boss@tideflo.com"]
+
+
+def test_drops_unmapped_personal_drive_files():
+    """개인 드라이브의 작업 소재(IMG_*.PNG, 스톡 이미지)가 공통을 채우면 분별력이 떨어진다"""
+    from build_draft import drop_unmapped_personal_drive
+    items = [
+        {"source": "drive", "text": "IMG_7410.PNG", "project": None, "biz_id": None},
+        {"source": "drive", "text": "밀도_메타광고리포트.txt", "project": None, "biz_id": "mildo"},
+        {"source": "drive", "text": "산출물.pdf", "project": "금연서비스 통합정보시스템", "biz_id": None},
+        {"source": "gmail", "text": "메일은 대상 아님", "project": None, "biz_id": None},
+    ]
+    kept = [x["text"] for x in drop_unmapped_personal_drive(items)]
+    assert "IMG_7410.PNG" not in kept
+    assert "밀도_메타광고리포트.txt" in kept      # 사업이 드러나면 산출물이다
+    assert "산출물.pdf" in kept                  # 공유 드라이브 = 사업 경로
+    assert "메일은 대상 아님" in kept             # 드라이브만 대상

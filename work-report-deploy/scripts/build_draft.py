@@ -37,6 +37,17 @@ def group_by_business(items, businesses, drop_empty=False):
     return [g for g in groups if g["items"]] if drop_empty else groups
 
 
+def drop_unmapped_personal_drive(items):
+    """개인 드라이브(공유 드라이브가 아닌 곳) 파일 중 **사업이 특정되지 않은 것**은 버린다.
+
+    개인 드라이브에는 작업 중 소재가 쌓인다 (IMG_7410.PNG, 스톡 이미지, 로고 후보 …).
+    경로로 사업을 알 수 없어 전부 공통에 몰리면 보고서의 분별력이 떨어진다(실측 21건).
+    단 "밀도_메타광고리포트.txt" 처럼 **파일명으로 사업이 드러나면 남긴다** — 실제 산출물이다.
+    """
+    return [x for x in items
+            if not (x.get("source") == "drive" and not x.get("project") and not x.get("biz_id"))]
+
+
 def find_unsourced(items):
     return [x for x in items if not x.get("sources")]
 
@@ -109,8 +120,10 @@ def build(nn, date_from, date_to):
         cfg.get("tools", []), businesses, date_from, date_to,
         member_id=dooray_member,
         github=gh_cfg,
-        figma_name=(cfg.get("profile") or {}).get("name"))
+        figma_name=(cfg.get("profile") or {}).get("name"),
+        nn=nn, member_email=(integ.get("google") or {}).get("email") or cfg.get("email"))
     items = classify(items, businesses)   # 사업 매핑: 등록ID → 프로젝트명 유사도 → 별칭 키워드
+    items = drop_unmapped_personal_drive(items)
     items = merge_duplicates(items)
     items = compress_minor(items)
     items = apply_carryover(items, _load_prev_next(nn, date_from))

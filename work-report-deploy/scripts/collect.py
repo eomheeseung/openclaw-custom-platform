@@ -160,28 +160,61 @@ def collect_calendar(days=7, date_from=None, date_to=None):
     return items, ok
 
 
-def collect_drive(days=7, date_from=None, date_to=None, member_name=None):
-    """공유 드라이브명을 컨테이너로 삼아 매핑 (parents 가 드라이브 루트인 경우).
-    그 외 파일은 파일명 키워드 / LLM 보정에 맡긴다."""
+DRIVE_API = "http://172.18.0.1:18799/api/drive/advanced-search"
+# 스크린샷 파일명(예: "2026-08-11 19_04_17.348.png") — 보고 대상이 아니다
+RE_SCREENSHOT = re.compile(r"^\d{4}-\d{2}-\d{2}[ _]\d{2}[_:]\d{2}[_:]\d{2}")
+DRIVE_MAX = 40
+
+
+def _drive_call(payload):
+    cmd = ["curl", "-s", "-m", "40", "-X", "POST", "-H", "Content-Type: application/json",
+           "-d", json.dumps(payload, ensure_ascii=False), DRIVE_API]
+    try:
+        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout)
+    except Exception:
+        return None
+    return d if d.get("ok") else None
+
+
+def drive_account(nn):
+    """본인 구글 계정. integrations.json 에는 없고 API 응답 `account` 로만 알 수 있다."""
+    d = _drive_call({"userNN": nn, "pageSize": 1})
+    return (d or {}).get("account")
+
+
+def collect_drive(nn, date_from, date_to, member_email=None):
+    """drive-advanced 확장의 검색 API 로 **본인이 수정한 파일만** 기간으로 조회한다.
+
+    ⚠ `gog drive recent` 를 쓰면 안 된다 — 일수와 무관하게 **항상 30건**만 돌려줘서
+    공유 드라이브가 활발하면 본인 파일이 통째로 잘린다(실측: 본인 0건 / 실제 120건).
+    """
+    member_email = member_email or drive_account(nn)
+    if not member_email:
+        return [], False              # 계정을 모르면 타인 파일이 섞인다 — 실패로 드러냄
+    d = _drive_call({"userNN": nn, "modifiedAfter": date_from, "modifiedBefore": date_to,
+                     "modifiedByEmail": member_email, "pageSize": 200})
+    if not d:
+        return [], False
+    # 공유 드라이브 이름이 곧 사업명이다 (예: "금연서비스 통합정보시스템 위탁운영").
+    # 파일명만으로는 어느 사업인지 알 수 없으므로 **경로로 판단한다** — classify 가
+    # project(= 드라이브명)를 사업명과 유사도 비교해 매핑한다.
     ok_s, ds = _run("gog drive shared")
-    drive_names = {d.get("id"): d.get("name") for d in ds.get("drives", [])} if ok_s else {}
-    ok, d = _run(f"gog drive recent {days}")
+    drive_names = {x.get("id"): x.get("name") for x in ds.get("drives", [])} if ok_s else {}
     items = []
     for f in d.get("files", []):
-        # 공유 드라이브에는 팀원이 수정한 파일이 함께 잡힌다 — 깃헙 author 필터와 같은 이유로 본인 것만.
-        by = f.get("modifiedBy")
-        if member_name and by and member_name not in by:
+        name = (f.get("name") or "").strip()
+        if not name or RE_SCREENSHOT.match(name):
             continue
-        if date_from and not in_period(f.get("modified"), date_from, date_to):
-            continue
-        url = f"https://drive.google.com/file/d/{f.get('id')}/view"
-        container = None
-        for parent in f.get("parents") or []:
-            if parent in drive_names:
-                container = drive_names[parent]
-                break
-        items.append(normalize_item(f, "drive", None, url, "done", project=container))
-    return items, ok
+        # driveId 가 없으면 개인 드라이브 — 사업을 특정할 수 없어 공통으로 간다
+        container = drive_names.get(f.get("driveId"))
+        items.append(normalize_item(
+            {"title": name, "date": f.get("modifiedTime")}, "drive", None,
+            f.get("webViewLink"), "done", project=container))
+    # 산출물이 많은 주에는 수십 건이 나온다. 최신순으로 잘라 다듬기 단계의 부담을 줄인다.
+    items.sort(key=lambda x: x.get("at") or "", reverse=True)
+    if len(items) > DRIVE_MAX:
+        items = items[:DRIVE_MAX]
+    return items, True
 
 
 def collect_github(owner, date_from, date_to, token=None, author=None):
@@ -235,7 +268,7 @@ def collect_figma(file_keys, member_name):
 
 
 def collect(tools, businesses, date_from, date_to, member_id=None,
-            github=None, figma_name=None):
+            github=None, figma_name=None, nn=None, member_email=None):
     items, stats, failures = [], {}, []
 
     def take(name, got, ok):
@@ -251,7 +284,7 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
     if tool_enabled(tools, "calendar"):
         take("calendar", *collect_calendar(7, date_from, date_to))
     if tool_enabled(tools, "drive"):
-        take("drive", *collect_drive(7, date_from, date_to, figma_name))
+        take("drive", *collect_drive(nn, date_from, date_to, member_email))
     if tool_enabled(tools, "github"):
         g = github or {}
         take("github", *collect_github(g.get("owner"), date_from, date_to,
