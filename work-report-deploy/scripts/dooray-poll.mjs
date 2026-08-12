@@ -43,6 +43,16 @@ function isoWeek(now = new Date()) {
 
 const sessionKeyFor = (week) => `${SESSION_PREFIX}${week}`;
 const sessionLabelFor = (week) => `두레이 대화 · ${week}`;
+
+/** 두레이에서 웹으로 건너올 링크 — 해당 주차 대화가 바로 열린다.
+ *  UI 경로 규칙: /chat/<agentId>/<sessionTail> → sessionKey `agent:<agentId>:<tail>` (App.tsx).
+ *  게이트웨이가 세션 키를 소문자로 저장하므로 tail 도 소문자여야 한다. */
+function webLink(nn, week) {
+  const cfg = readJson(`${DATA}/user${nn}/openclaw.json`);
+  const token = cfg?.gateway?.auth?.token || "";
+  const tail = `dooray-${week}`.toLowerCase();
+  return `http://claw.tideflo.work/chat/secretary/${tail}${token ? `?token=${token}` : ""}`;
+}
 const IDLE_MS = 60_000;              // 평소 주기
 const ACTIVE_MS = 5_000;             // 최근 대화가 있으면 촘촘히
 const ACTIVE_WINDOW_MS = 5 * 60_000; // '최근' 의 기준
@@ -71,8 +81,19 @@ async function dooray(token, path, init = {}) {
     ...init,
     headers: { Authorization: `dooray-api ${token}`, "Content-Type": "application/json", ...(init.headers || {}) },
   });
-  const body = await res.json().catch(() => null);
-  return body?.header?.isSuccessful ? body : null;
+  const raw = await res.text().catch(() => "");
+  let body = null;
+  try { body = JSON.parse(raw); } catch { return null; }
+  if (!body?.header?.isSuccessful) return null;
+  // ⚠ 두레이 ID 는 19자리 정수라 2^53 을 넘는다. JSON.parse 가 뒷자리를 반올림해
+  // 3829042038568752240 → …752000 이 된다(실측). 원문에서 문자열로 다시 뽑는다.
+  body.__raw = raw;
+  return body;
+}
+
+function rawId(body, field) {
+  const m = new RegExp(`"${field}"\\s*:\\s*"?(\\d+)"?`).exec(body?.__raw || "");
+  return m ? m[1] : null;
 }
 
 /** '나와의 대화' 는 채널 목록에 나오지 않는다 — direct-send 응답의 channelId 로만 알 수 있다. */
@@ -85,7 +106,7 @@ async function resolveChannel(nn, token, memberId, state) {
       text: `[TideClaw] 수신 연결됨. «${PREFIX}» 로 시작하면 제가 처리합니다. 예) ${PREFIX}이번 주 보고 초안 만들어줘`,
     }),
   });
-  const id = body?.result?.channelId;
+  const id = rawId(body, "channelId");
   if (id) {
     state.channelId = String(id);
     log(`user${nn} 채널 확인 ${state.channelId}`);
@@ -179,7 +200,8 @@ async function pollUser(u, state) {
       "",
       "↳ 두레이에서 온 요청이다. 답한 뒤 반드시 두레이로도 회신해라:",
       `   exec: python3 /home/node/documents/work-report/scripts/notify.py ${u.nn} "3줄 이내 요약"`,
-      "   카드(work-draft 등)는 두레이로 보내지 마 — \"TideClaw 에서 확인해주세요\" 안내만.",
+      `   카드(work-draft 등)는 두레이로 보내지 마. 대신 이 링크를 회신에 그대로 붙여라:`,
+      `   ${webLink(u.nn, isoWeek())}`,
     ].join("\n");
     const week = isoWeek();
     const labelIfNew = state.labeledWeek === week ? null : sessionLabelFor(week);

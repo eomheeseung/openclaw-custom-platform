@@ -72,3 +72,12 @@ def test_notify_without_integration(monkeypatch, tmp_path):
     monkeypatch.setattr(notify.paths, "data_dir", lambda nn: str(tmp_path))
     ok, msg = notify.notify("02", "테스트")
     assert ok is False and "미연동" in msg
+
+
+def test_dooray_ids_exceed_js_safe_integer():
+    """두레이 ID 는 19자리라 JS Number 로 다루면 뒷자리가 반올림된다(실측 사고).
+    파이썬 쪽에서도 int 로 바꾸지 말고 문자열로 유지해야 한다."""
+    channel_id = "3829042038568752240"
+    assert len(channel_id) == 19
+    assert int(channel_id) > 2 ** 53          # JS Number.MAX_SAFE_INTEGER 초과
+    assert str(float(int(channel_id))) != channel_id   # 부동소수로 바꾸면 손실
