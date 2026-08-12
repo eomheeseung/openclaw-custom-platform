@@ -1,0 +1,425 @@
+<meta charset="utf-8">
+<title>업무보고 개편 · 사용자 시나리오</title>
+<style>
+:root{
+  --accent:#0F766E; --purple:#7c3aed; --dooray:#2f5fd0; --bg:#faf8f2; --card:#fff;
+  --border:#e5e2d9; --text:#1f2937; --muted:#6b7280;
+  --amber:#f59e0b; --amber-bg:#fef3c7; --rose:#e11d48; --emerald:#059669; --blue:#3b82f6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#eeece6;color:var(--text);line-height:1.6;font-size:14px;
+  font-family:'Pretendard','Noto Sans KR','Malgun Gothic',ui-sans-serif,system-ui,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:28px 20px 70px}
+h1{font-size:25px;font-weight:800;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 24px}
+
+/* 등장인물 */
+.cast{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:28px}
+.actor{flex:1;min-width:150px;background:var(--card);border:1px solid var(--border);
+  border-radius:14px;padding:13px 14px}
+.actor .a-emoji{font-size:22px}
+.actor .a-name{font-weight:800;font-size:13px;margin:4px 0 2px}
+.actor .a-role{font-size:10.5px;color:var(--muted);line-height:1.5}
+.actor.human{border-color:rgba(15,118,110,.45);background:rgba(15,118,110,.05)}
+.actor.hidden-agent{border-style:dashed;opacity:.85}
+
+/* 장면 */
+.scene{background:var(--card);border:1px solid var(--border);border-radius:16px;
+  padding:0;margin-bottom:20px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.scene > .s-head{display:flex;align-items:center;gap:11px;padding:13px 18px;
+  border-bottom:1px solid #f0eee7}
+.s-day{flex-shrink:0;width:52px;text-align:center;background:var(--accent);color:#fff;
+  border-radius:9px;padding:4px 0;font-size:11px;font-weight:800;line-height:1.3}
+.s-day small{display:block;font-weight:600;font-size:9.5px;opacity:.85}
+.s-title{font-size:14.5px;font-weight:800}
+.s-sub{font-size:11px;color:var(--muted)}
+.s-body{padding:15px 18px}
+
+/* 어디서 일어나는가 */
+.place{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;
+  padding:2px 9px;border-radius:999px;margin-left:auto}
+.place.dooray{background:rgba(47,95,208,.1);color:var(--dooray)}
+.place.web{background:rgba(15,118,110,.1);color:var(--accent)}
+.place.auto{background:var(--amber-bg);color:#92400e}
+
+/* 두레이 메신저 패널 */
+.dooray-panel{border:1px solid rgba(47,95,208,.3);border-radius:13px;overflow:hidden;
+  max-width:430px;background:#fff}
+.dooray-panel .dp-head{background:var(--dooray);color:#fff;padding:7px 13px;font-size:11px;
+  font-weight:700;display:flex;align-items:center;gap:6px}
+.dooray-panel .dp-body{padding:11px 13px;background:#f4f6fb}
+.dmsg{display:flex;gap:8px;margin:8px 0;align-items:flex-start}
+.dmsg.me{flex-direction:row-reverse}
+.dav{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:12px;background:#fff;border:1px solid #dde3f0}
+.dav.me{background:var(--dooray);color:#fff;font-size:10px;font-weight:700}
+.dbub{max-width:80%;padding:8px 11px;border-radius:11px;background:#fff;
+  border:1px solid #e3e8f4;font-size:12px;line-height:1.55}
+.dbub.me{background:var(--dooray);color:#fff}
+.dbub a{color:var(--dooray);font-weight:700;text-decoration:underline}
+.dbub.me a{color:#fff}
+.dtime{font-size:9px;color:#9aa3b8;align-self:flex-end;flex-shrink:0}
+
+/* 웹 채팅 패널 */
+.web-panel{border:1px solid rgba(15,118,110,.3);border-radius:13px;overflow:hidden;
+  background:#fff}
+.web-panel .wp-head{background:rgba(15,118,110,.08);color:var(--accent);padding:7px 13px;
+  font-size:11px;font-weight:700;display:flex;align-items:center;gap:6px}
+.web-panel .wp-body{padding:11px 13px;background:var(--bg)}
+.wmsg{display:flex;gap:8px;margin:8px 0;align-items:flex-start}
+.wmsg.me{flex-direction:row-reverse}
+.wav{width:26px;height:26px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:12px;background:#fff;border:1px solid var(--border)}
+.wav.me{background:var(--accent);color:#fff;font-size:10px;font-weight:700}
+.wbub{max-width:82%;padding:8px 11px;border-radius:11px;background:#fff;
+  border:1px solid rgba(0,0,0,.05);font-size:12px}
+.wbub.me{background:var(--accent);color:#fff}
+
+/* 카드 (웹 안) */
+.card{border:1px solid rgba(15,118,110,.3);background:#fff;border-radius:12px;
+  padding:11px;margin:6px 0;font-size:11.5px}
+.card .c-hd{font-weight:800;font-size:11.5px;color:var(--accent);margin-bottom:7px}
+.biz{border:1px solid var(--border);border-radius:9px;margin-bottom:6px;overflow:hidden}
+.biz .bh{padding:6px 10px;display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid #f2f0ea;font-size:11px}
+.biz .bn{font-weight:800}
+.it{display:flex;align-items:baseline;gap:7px;padding:4px 10px;font-size:11px;
+  border-top:1px solid #f7f5f0}
+.it .st{width:13px;text-align:center;font-weight:800;flex-shrink:0}
+.it .st.d{color:var(--emerald)} .it .st.w{color:var(--amber)} .it .st.n{color:#9aa3ae}
+.it .tx{flex:1;line-height:1.45}
+.it .sr{font-size:9px;color:var(--accent);white-space:nowrap;border-bottom:1px dotted rgba(15,118,110,.45)}
+.it .sr.no{color:var(--muted);border:none}
+.btn{display:inline-block;padding:4px 11px;border-radius:7px;font-size:10.5px;font-weight:700;
+  border:1px solid var(--border);background:#fff;color:#555}
+.btn.p{background:var(--accent);color:#fff;border-color:var(--accent)}
+.carry{font-size:8.5px;color:var(--blue);font-weight:800}
+
+/* 무대 뒤 */
+.backstage{margin-top:12px;border:1px dashed #cfcabe;border-radius:11px;padding:10px 13px;
+  background:rgba(0,0,0,.015)}
+.backstage .b-t{font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.4px;
+  margin-bottom:6px}
+.bflow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:10.5px}
+.bnode{border:1px solid var(--border);border-radius:8px;background:#fff;padding:4px 10px;
+  white-space:nowrap}
+.bnode.dashed{border-style:dashed}
+.barw{color:#c2bdb1;font-weight:800}
+
+/* 노트 */
+.note{border-left:4px solid var(--blue);background:#dbeafe;padding:8px 13px;
+  border-radius:0 7px 7px 0;font-size:11.5px;margin:11px 0 0}
+.note.warn{border-color:var(--amber);background:var(--amber-bg);color:#92400e}
+.note.q{border-color:var(--purple);background:rgba(124,58,237,.07);color:#5b21b6}
+.note b{display:block;margin-bottom:2px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:860px){.two{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:11.5px;margin:8px 0}
+th{background:rgba(15,118,110,.07);color:var(--accent);text-align:left;padding:5px 9px;
+  font-size:10.5px;font-weight:800}
+td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:9.5px;font-weight:700}
+.pill.ok{background:#d1fae5;color:#047857}
+.pill.warn{background:var(--amber-bg);color:#92400e}
+</style>
+
+<div class="wrap">
+<h1>업무보고 개편 · 사용자 시나리오</h1>
+<p class="sub">2026-08-12 · 손재민 매니저의 일주일 — 화면·메신저·자동 실행이 어떻게 맞물리는지</p>
+
+<!-- 등장인물 -->
+<div class="cast">
+  <div class="actor human">
+    <div class="a-emoji">🧑</div>
+    <div class="a-name">손재민 매니저</div>
+    <div class="a-role">기술구현그룹 · e진로지원센터 담당<br>두레이·Gmail·캘린더 사용</div>
+  </div>
+  <div class="actor">
+    <div class="a-emoji">🤵</div>
+    <div class="a-name">비서</div>
+    <div class="a-role">유일한 대화 상대.<br>받아서 나눠주고, 종합하고, 발송한다</div>
+  </div>
+  <div class="actor hidden-agent">
+    <div class="a-emoji">📝</div>
+    <div class="a-name">업무보고</div>
+    <div class="a-role">무대 뒤. 툴을 뒤져 초안 데이터를<br>만들 뿐, 직접 말하지 않는다</div>
+  </div>
+  <div class="actor hidden-agent">
+    <div class="a-emoji">🏢</div>
+    <div class="a-name">사업 주간보고</div>
+    <div class="a-role">무대 뒤. SR 조회 → HWPX.<br>역시 비서를 통해서만 만난다</div>
+  </div>
+</div>
+
+<!-- ══════ 장면 1 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day">월<small>09:50</small></span>
+    <div>
+      <div class="s-title">출근하니 브리핑이 와 있다</div>
+      <div class="s-sub">부르지 않았는데 먼저 온다 — 팀원의 첫 조건</div>
+    </div>
+    <span class="place dooray">두레이 메신저</span>
+  </div>
+  <div class="s-body">
+    <div class="dooray-panel">
+      <div class="dp-head">💬 TideClaw 비서</div>
+      <div class="dp-body">
+        <div class="dmsg"><div class="dav">🤵</div><div class="dbub">
+          좋은 아침이에요. 오늘 브리핑입니다.<br>
+          · 회의 <b>2건</b> — 10:30 기술구현그룹 / 15:00 e진로 정기회의<br>
+          · 미답 메일 <b>3통</b> — 발주처 문의 1건 포함<br>
+          · 두레이 마감 임박 <b>1건</b> — #163 (수요일까지)<br>
+          자세히 보려면 <a>웹에서 열기</a>
+        </div><span class="dtime">09:50</span></div>
+      </div>
+    </div>
+    <div class="note">
+      <b>지금도 웹에는 morning-brief 가 있다 (user01·11·12·14)</b>
+      바뀌는 건 도착 위치다. 웹은 열어야 보이지만, 두레이는 어차피 하루 종일 켜져 있다.
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 장면 2 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day">화<small>11:20</small></span>
+    <div>
+      <div class="s-title">이동 중에 한 줄 지시</div>
+      <div class="s-sub">두레이 B안 — 메신저에서 시키고, 메신저로 회신받는다</div>
+    </div>
+    <span class="place dooray">두레이 메신저</span>
+  </div>
+  <div class="s-body">
+    <div class="dooray-panel">
+      <div class="dp-head">💬 TideClaw 비서</div>
+      <div class="dp-body">
+        <div class="dmsg me"><div class="dav me">손</div><div class="dbub me">어제 들어온 SR 요약해줘</div><span class="dtime">11:20</span></div>
+        <div class="dmsg"><div class="dav">🤵</div><div class="dbub">확인 중이에요…</div><span class="dtime">11:20</span></div>
+        <div class="dmsg"><div class="dav">🤵</div><div class="dbub">
+          어제 등록 SR <b>2건</b>입니다.<br>
+          · MTVS-…-0021 로그인 오류 문의 <b>(신규)</b><br>
+          · MTVS-…-0022 통계 화면 개선 요청 <b>(분류됨)</b><br>
+          상세 확인 → <a>웹에서 열기</a>
+        </div><span class="dtime">11:21</span></div>
+      </div>
+    </div>
+    <div class="backstage">
+      <div class="b-t">무대 뒤</div>
+      <div class="bflow">
+        <span class="bnode">두레이 Outgoing Webhook</span><span class="barw">›</span>
+        <span class="bnode">OpenClaw webhooks 확장<br><small style="color:var(--muted)">path·secret 인증 → sessionKey 로 비서 세션 투입</small></span><span class="barw">›</span>
+        <span class="bnode dashed">비서가 처리</span><span class="barw">›</span>
+        <span class="bnode">Incoming Webhook 으로 회신</span>
+      </div>
+    </div>
+    <div class="note warn">
+      <b>메신저의 한계는 명확히 한다</b>
+      두레이에는 카드 UI(체크박스·표·버튼)가 없다. 메신저는 <b>짧은 질의와 알림</b>까지만.
+      편집·확정이 필요한 일은 항상 "웹에서 열기"로 넘긴다.
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 장면 3 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day">수<small>14:00</small></span>
+    <div>
+      <div class="s-title">사업 주간보고도 비서에게</div>
+      <div class="s-sub">에이전트를 골라 들어가지 않는다 — 화면은 하나</div>
+    </div>
+    <span class="place web">TideClaw 웹</span>
+  </div>
+  <div class="s-body">
+    <div class="web-panel">
+      <div class="wp-head">🤵 비서</div>
+      <div class="wp-body">
+        <div style="display:flex;gap:6px;margin-bottom:9px">
+          <span class="btn">📝 이번 주 업무보고</span>
+          <span class="btn p">🏢 사업 주간보고</span>
+        </div>
+        <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">🏢 사업 주간보고</div></div>
+        <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:82%">
+          <div class="card">
+            <div class="c-hd">🏢 어느 사업 주간보고를 만들까요?</div>
+            <div class="it" style="border:1px solid rgba(15,118,110,.35);border-radius:8px;margin-bottom:4px">
+              <span class="tx"><b>대한체육회 e진로지원센터</b> <span style="color:var(--muted);font-size:10px">· 마지막 사용 8/8</span></span>
+            </div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">…이후 SR 조회 → 그룹핑 → 초안 → HWPX 다운로드 (기존 흐름 그대로, 화면만 비서)</div>
+        </div></div>
+      </div>
+    </div>
+    <div class="backstage">
+      <div class="b-t">무대 뒤</div>
+      <div class="bflow">
+        <span class="bnode dashed">비서 → sessions_spawn(business-report)</span><span class="barw">›</span>
+        <span class="bnode dashed">business-report 가 JSON 반환<br><small style="color:var(--muted)">{"kind":"biz-picker","data":…} — 카드를 직접 뱉지 않음</small></span><span class="barw">›</span>
+        <span class="bnode">비서가 카드로 재발행</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 장면 4 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day">목<small>17:00</small></span>
+    <div>
+      <div class="s-title">아무도 시키지 않았는데 초안이 만들어진다</div>
+      <div class="s-sub">cron — 사람 없이 도는 유일한 구간</div>
+    </div>
+    <span class="place auto">자동 (cron · Asia/Seoul)</span>
+  </div>
+  <div class="s-body">
+    <div class="backstage" style="margin-top:0">
+      <div class="b-t">무대 뒤 — 전부 자동</div>
+      <div class="bflow">
+        <span class="bnode">⏰ 목 17:00</span><span class="barw">›</span>
+        <span class="bnode dashed">비서 → work-report 위임</span><span class="barw">›</span>
+        <span class="bnode dashed">두레이·Gmail·캘린더 수집<br><small style="color:var(--muted)">SR 제외 · 중복 병합 · 사소 항목 묶음</small></span><span class="barw">›</span>
+        <span class="bnode">draft.json <b>파일 저장</b><br><small style="color:var(--muted)">세션이 날아가도 초안은 남는다</small></span><span class="barw">›</span>
+        <span class="bnode">두레이로 알림</span>
+      </div>
+    </div>
+    <div class="dooray-panel" style="margin-top:12px">
+      <div class="dp-head">💬 TideClaw 비서</div>
+      <div class="dp-body">
+        <div class="dmsg"><div class="dav">🤵</div><div class="dbub">
+          이번 주 업무보고 초안이 준비됐어요.<br>
+          완료 <b>5</b> · 진행중 <b>2</b> · 차주 <b>3</b>건<br>
+          내일 발송 전에 확인해 주세요 → <a>웹에서 열기</a>
+        </div><span class="dtime">17:03</span></div>
+      </div>
+    </div>
+    <div class="note warn">
+      <b>실패해도 조용히 넘어가지 않는다</b>
+      수집이 실패하면 같은 채널로 "초안 생성 실패 — Gmail 토큰 만료" 가 온다.
+      8/3~8/4 처럼 <b>실패를 며칠 뒤에 아는 일</b>을 막는 게 이 알림의 진짜 역할이다.
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 장면 5 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day">금<small>10:00</small></span>
+    <div>
+      <div class="s-title">확인하고, 한마디로 고치고, 보낸다</div>
+      <div class="s-sub">사람이 개입하는 건 이 장면뿐 — 목표는 2분</div>
+    </div>
+    <span class="place web">TideClaw 웹</span>
+  </div>
+  <div class="s-body">
+    <div class="web-panel">
+      <div class="wp-head">🤵 비서</div>
+      <div class="wp-body">
+        <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:88%">
+          <div class="card">
+            <div class="c-hd">📝 업무보고 초안 · 08-10 ~ 08-14</div>
+            <div class="biz">
+              <div class="bh"><span class="bn">대한체육회 e진로지원센터</span>
+                <span style="font-size:9.5px;color:var(--muted)">✓3 ◐1 ○2</span></div>
+              <div class="it"><span class="st d">✓</span><span class="tx">로그인 오류 조치</span><span class="sr">두레이 #163 ↗</span></div>
+              <div class="it"><span class="st d">✓</span><span class="tx">문구·오탈자 수정 등 3건 <span style="font-size:8.5px;color:var(--muted)">묶음</span></span><span class="sr">두레이 ↗</span></div>
+              <div class="it"><span class="st w">◐</span><span class="tx">통계 화면 개선 <span class="carry">지난주 예정 → 계속*</span></span><span class="sr">두레이 #158 ↗</span></div>
+              <div class="it"><span class="st n">○</span><span class="tx">정기 점검 일정 협의</span><span class="sr">캘린더 8/18 ↗</span></div>
+            </div>
+            <div class="biz">
+              <div class="bh"><span class="bn" style="color:var(--purple)">공통 · 기타</span></div>
+              <div class="it"><span class="st d">✓</span><span class="tx">기술구현그룹 회의 참석</span><span class="sr">캘린더 8/11 ↗</span></div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:5px;margin-top:7px">
+              <span class="btn">📄 메일 형태로 보기</span><span class="btn p">✓ 확정</span>
+            </div>
+          </div>
+        </div></div>
+        <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">통계 화면 개선에 "8월 내 배포 목표" 붙여줘. 그리고 확정</div></div>
+        <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:82%">
+          <div class="card" style="border-color:rgba(5,150,105,.4)">
+            <div class="c-hd" style="color:var(--emerald)">📧 발송 전 확인</div>
+            <table style="margin:2px 0 6px;font-size:10.5px">
+              <tr><td style="width:52px;color:var(--muted)">제목</td><td>[주간보고][2026-08-10~2026-08-14]기술구현그룹 손재민 매니저</td></tr>
+              <tr><td style="color:var(--muted)">받는이</td><td>차명건 대표</td></tr>
+            </table>
+            <div style="text-align:right"><span class="btn p">📧 발송</span></div>
+          </div>
+        </div></div>
+      </div>
+    </div>
+    <div class="note q">
+      <b>* 결정 대기 A — 이월 대조</b>
+      「지난주 예정 → 계속」 표시는 직전 draft.json 과 대조해야 나온다.
+      이게 있으면 "지난주에 하겠다던 걸 했는가"가 이어진다 — 보고가 관리가 되는 지점.
+      <b>미결정 상태. 채택 여부 판단 필요.</b>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 장면 6 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day" style="background:var(--purple)">언제든</span>
+    <div>
+      <div class="s-title">"주간보고 해줘" — 애매하면 한 번만 묻는다</div>
+      <div class="s-sub">이름 충돌의 마지막 안전망</div>
+    </div>
+    <span class="place web">TideClaw 웹</span>
+  </div>
+  <div class="s-body">
+    <div class="two">
+      <div class="web-panel">
+        <div class="wp-head">🤵 비서</div>
+        <div class="wp-body">
+          <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">주간보고 작성해줘</div></div>
+          <div class="wmsg"><div class="wav">🤵</div><div class="wbub">
+            어느 쪽인가요?<br>
+            <b>① 업무보고</b> 📝 — 내가 한 일 → 메일<br>
+            <b>② 사업 주간보고</b> 🏢 — SR → 한글 파일
+          </div></div>
+        </div>
+      </div>
+      <div>
+        <table>
+          <tr><th>발화</th><th>비서의 판단</th></tr>
+          <tr><td>"업무보고" · "이번 주 한 일"</td><td>📝 work-report 위임</td></tr>
+          <tr><td>"사업 주간보고" · "SR" · "한글 보고서"</td><td>🏢 business-report 위임</td></tr>
+          <tr><td>그냥 "주간보고"</td><td><b>되묻기</b> (왼쪽)</td></tr>
+        </table>
+        <div class="note q" style="margin-top:8px">
+          <b>결정 대기 B — keyword_map 확장 범위</b>
+          이 판단표를 work-report·business-report 두 줄만 넣을지,
+          기존 커스텀 에이전트(docwriter·designer 등)까지 등록할지.
+          후자면 <b>위임 0건인 7명</b>에게도 통로가 생긴다. <b>미결정.</b>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 흐름 한 장 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day" style="background:#4b5563">정리</span>
+    <div><div class="s-title">일주일이 한 장으로</div></div>
+  </div>
+  <div class="s-body">
+    <table>
+      <tr><th style="width:11%">언제</th><th style="width:17%">어디서</th><th>무엇이</th><th style="width:15%">사람이 하는 일</th></tr>
+      <tr><td>월 09:50</td><td>두레이</td><td>아침 브리핑 도착</td><td>읽기</td></tr>
+      <tr><td>평일 수시</td><td>두레이</td><td>한 줄 지시 → 요약 회신 <span class="pill warn">신규 개발</span></td><td>한 줄</td></tr>
+      <tr><td>필요 시</td><td>웹</td><td>사업 주간보고 (비서 경유) <span class="pill warn">전환</span></td><td>버튼 + 확인</td></tr>
+      <tr><td>목 17:00</td><td>자동</td><td>업무보고 초안 생성 → 두레이 알림 <span class="pill warn">신규</span></td><td><b>없음</b></td></tr>
+      <tr><td>금 오전</td><td>웹</td><td>초안 확인 → 수정 한마디 → 발송 <span class="pill warn">신규</span></td><td><b>~2분</b></td></tr>
+    </table>
+    <div class="note">
+      <b>설계의 척도</b>
+      사람 손이 가는 시간은 <b>금요일 2분 + 평일의 한 줄들</b>이 전부여야 한다.
+      이보다 늘어나면 팀원이 아니라 숙제다.
+    </div>
+  </div>
+</div>
+
+</div>
