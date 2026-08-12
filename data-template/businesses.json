@@ -296,7 +296,11 @@
       ],
       "dooray_project_id": "",
       "github_repos": [],
-      "figma_file_keys": []
+      "figma_file_keys": [],
+      "aliases": [
+        "메타버스아카데미",
+        "가상융합기술아카데미"
+      ]
     },
     {
       "id": "biz-14",
@@ -495,5 +499,6 @@
       "github_repos": [],
       "figma_file_keys": []
     }
-  ]
+  ],
+  "_closed_note": "종료: 임업정보다드림시스템, 스타트업플러스 (미등록 — 공통 처리)"
 }

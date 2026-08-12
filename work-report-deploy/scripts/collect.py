@@ -110,13 +110,16 @@ def collect_drive(days=7):
 
 
 def collect_github(owner, date_from, date_to, token=None, author=None):
-    """org 단위 커밋 검색 — 레포를 등록할 필요 없음.
-    author(본인 username) 는 필수: 공용 저장소에서 생략하면 팀원 커밋이 섞인다."""
-    if not owner or not token:
+    """본인 커밋 전역 검색 — 레포도 조직도 등록할 필요 없음.
+    실측(user02): 레포가 infconn/·eomheeseung/ 등 여러 조직에 흩어져 있어 org 고정은 부적합.
+    author(본인 username) 는 필수: 생략하면 공용 저장소의 팀원 커밋이 섞인다.
+    owner 는 선택 — 지정하면 그 조직으로 범위를 좁힌다."""
+    if not token:
         return [], True                 # 미설정 = 조회 안 함 (정상)
     if not author:
-        return [], False                # 공용 저장소 오염 방지 — 실패로 드러냄
-    q = f"org:{owner}+author:{author}+author-date:{date_from}..{date_to}"
+        return [], False                # 타인 커밋 오염 방지 — 실패로 드러냄
+    scope = f"org:{owner}+" if owner else ""
+    q = f"{scope}author:{author}+author-date:{date_from}..{date_to}"
     cmd = (f'curl -s -m 30 -H "Authorization: Bearer {token}" '
            f'-H "Accept: application/vnd.github+json" '
            f'"https://api.github.com/search/commits?q={q}&per_page=50"')
@@ -131,7 +134,8 @@ def collect_github(owner, date_from, date_to, token=None, author=None):
     items = []
     for c in rows:
         msg = (c.get("commit") or {}).get("message", "").split("\n")[0]
-        repo = ((c.get("repository") or {}).get("name") or "")
+        r = c.get("repository") or {}
+        repo = r.get("full_name") or r.get("name") or ""
         items.append(normalize_item(
             {"title": msg, "date": (c.get("commit") or {}).get("author", {}).get("date")},
             "github", None, c.get("html_url"), "done", repo=repo))

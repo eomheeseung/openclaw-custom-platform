@@ -195,8 +195,8 @@ export function IntegrationsPage() {
               <div>
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs font-medium text-text-secondary block mb-1">Owner / Organization</label>
-                    <input type="text" value={ghOwner} onChange={(e) => setGhOwner(e.target.value)} placeholder="예: tideflo"
+                    <label className="text-xs font-medium text-text-secondary block mb-1">Owner / Organization (선택)</label>
+                    <input type="text" value={ghOwner} onChange={(e) => setGhOwner(e.target.value)} placeholder="비워두면 모든 조직에서 본인 커밋을 찾습니다"
                       className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
                   </div>
                   <div>
@@ -208,11 +208,11 @@ export function IntegrationsPage() {
                     <label className="text-xs font-medium text-text-secondary block mb-1">GitHub Username (본인 계정명)</label>
                     <input type="text" value={ghUsername} onChange={(e) => setGhUsername(e.target.value)} placeholder="예: jaemin-son — 업무보고에서 본인 커밋만 집계할 때 필요"
                       className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
-                    <p className="text-[11px] text-text-secondary mt-1">공용 저장소에서 팀원 커밋이 섞이지 않도록 본인 커밋만 골라냅니다.</p>
+                    <p className="text-[11px] text-text-secondary mt-1"><b>필수</b> — 공용 저장소에서 팀원 커밋이 섞이지 않도록 본인 커밋만 골라냅니다. 없으면 GitHub 수집을 건너뜁니다.</p>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-text-secondary block mb-1">Repository (선택 · 쉼표로 여러 개)</label>
-                    <input type="text" value={ghRepo} onChange={(e) => setGhRepo(e.target.value)} placeholder="예: repo-a, other-org/repo-b — 사업 소속 레포는 관리자가 사업에 등록"
+                    <label className="text-xs font-medium text-text-secondary block mb-1">Repository (선택 · 보통 비워둡니다)</label>
+                    <input type="text" value={ghRepo} onChange={(e) => setGhRepo(e.target.value)} placeholder="특정 저장소만 보고 싶을 때만 입력"
                       className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
                   </div>
                   <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors" disabled={saving === 'github'} onClick={saveGithub}>

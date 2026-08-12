@@ -25,7 +25,8 @@ def business_for_container(container_name, businesses):
     cand = _strip_year(container_name)
     best, best_score = None, 0.0
     for b in businesses:
-        for key in (b.get("name"), b.get("alias")):
+        keys = [b.get("name"), b.get("alias")] + list(b.get("aliases") or [])
+        for key in keys:      # aliases = 옛 사업명 (예: 메타버스아카데미 → 가상융합)
             if not key:
                 continue
             sc = similarity(cand, key)
@@ -41,9 +42,10 @@ def business_for_text(text, businesses):
     if not text:
         return None
     for b in businesses:
-        alias = (b.get("alias") or "").strip()
-        if len(alias) >= 2 and alias in text:
-            return b["id"]
+        for alias in [b.get("alias")] + list(b.get("aliases") or []):
+            alias = (alias or "").strip()
+            if len(alias) >= 2 and alias in text:
+                return b["id"]
     return None
 
 
