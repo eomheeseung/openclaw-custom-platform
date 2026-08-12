@@ -94,11 +94,15 @@ function resolveAgent(nn, text) {
 /** 두레이에서 웹으로 건너올 링크 — 해당 주차 대화가 바로 열린다.
  *  UI 경로 규칙: /chat/<agentId>/<sessionTail> → sessionKey `agent:<agentId>:<tail>` (App.tsx).
  *  게이트웨이가 세션 키를 소문자로 저장하므로 tail 도 소문자여야 한다. */
-function webLink(nn, week) {
+function webLink(nn, sessionKey) {
   const cfg = readJson(`${DATA}/user${nn}/openclaw.json`);
   const token = cfg?.gateway?.auth?.token || "";
-  const tail = `dooray-${week}`.toLowerCase();
-  return `http://claw.tideflo.work/chat/secretary/${tail}${token ? `?token=${token}` : ""}`;
+  // UI 경로 규칙: /chat/<agentId>/<tail> ← sessionKey `agent:<agentId>:<tail>`.
+  // 담당별로 세션이 갈리므로 실제 키에서 뽑아야 한다 — 고정 문자열로 만들면 엉뚱한 대화가 열린다(실측).
+  const [, agentId, ...rest] = String(sessionKey || "").split(":");
+  const tail = rest.join(":").toLowerCase();
+  if (!agentId || !tail) return `http://claw.tideflo.work/chat${token ? `?token=${token}` : ""}`;
+  return `http://claw.tideflo.work/chat/${agentId}/${tail}${token ? `?token=${token}` : ""}`;
 }
 // 두레이 호출 제한은 계정 단위 burst 20 / 초당 5회 충전.
 // 15초 주기 × 14명 = 0.93회/초 → 한도의 19%. 여유가 있으니 응답성을 택한다.
@@ -242,6 +246,18 @@ async function pollUser(u, state) {
     const text = m.text.trim().slice(PREFIX.length).trim();
     if (!text) continue;
     state.lastActiveAt = Date.now();
+    const week0 = isoWeek();
+    const matched0 = resolveAgent(u.nn, text);
+    let key0 = state.sessionKey;
+    let label0 = null;
+    if (matched0 || !key0) {
+      const agentId = matched0 || "secretary";
+      const now = new Date();
+      key0 = sessionKeyFor(week0, agentId, `${now.getHours()}${String(now.getMinutes()).padStart(2, "0")}`);
+      label0 = sessionLabelWith(agentDisplayName(u.nn, agentId), now);
+      state.sessionKey = key0;
+      log(`user${u.nn} → ${agentId} 새 대화 (${key0.split(":").pop()})`);
+    }
     // 회신 지시를 메시지에 함께 싣는다 — BOOTSTRAP 은 세션 첫 턴에만 읽히므로
     // 이미 진행 중인 세션에는 새 규칙이 반영되지 않는다(실측: 회신 누락).
     const body = [
@@ -250,22 +266,9 @@ async function pollUser(u, state) {
       "↳ 두레이에서 온 요청이다. 답한 뒤 반드시 두레이로도 회신해라:",
       `   exec: python3 /home/node/documents/work-report/scripts/notify.py ${u.nn} "3줄 이내 요약"`,
       `   카드(work-draft 등)는 두레이로 보내지 마. 대신 이 링크를 회신에 그대로 붙여라:`,
-      `   ${webLink(u.nn, isoWeek())}`,
+      `   ${webLink(u.nn, key0)}`,
     ].join("\n");
-    const week = isoWeek();
-    const matched = resolveAgent(u.nn, text);
-    let key = state.sessionKey;
-    let label = null;
-    if (matched || !key) {
-      // 담당을 불렀거나 이어갈 세션이 없으면 새로 시작한다
-      const agentId = matched || "secretary";
-      const now = new Date();
-      key = sessionKeyFor(week, agentId, `${now.getHours()}${String(now.getMinutes()).padStart(2, "0")}`);
-      label = sessionLabelWith(agentDisplayName(u.nn, agentId), now);
-      state.sessionKey = key;
-      log(`user${u.nn} → ${agentId} 새 대화 (${key.split(":").pop()})`);
-    }
-    const ok = await sendToSession(u.nn, body, key, label);
+    const ok = await sendToSession(u.nn, body, key0, label0);
     if (!ok) state.sessionKey = null;   // 실패한 세션을 붙들고 있지 않는다
     log(`user${u.nn} seq${m.seq} → ${ok ? "투입" : "실패"}: ${text.slice(0, 40)}`);
   }
