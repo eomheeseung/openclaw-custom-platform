@@ -41,8 +41,22 @@ function isoWeek(now = new Date()) {
   return `${year}-W${String(week).padStart(2, "0")}`;
 }
 
-const sessionKeyFor = (week, agentId = "secretary") =>
-  `agent:${agentId}:dooray-${week}`;
+/* 담당 이름을 부른 순간이 새 작업의 시작이다 — 그때 세션을 새로 판다.
+   시간 기준(예: 30분)은 29분과 31분의 동작이 달라 사용자가 예측할 수 없다.
+   이름 없는 후속은 직전 세션을 그대로 이어간다. */
+const sessionKeyFor = (week, agentId, stamp) =>
+  `agent:${agentId}:dooray-${week}-${stamp}`;
+
+/** 사이드바에 보일 이름. 어느 담당과 언제 시작한 대화인지 알아볼 수 있게. */
+function sessionLabelWith(agentName, d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `두레이 · ${agentName} · ${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function agentDisplayName(nn, agentId) {
+  const a = agentsOf(nn).find((x) => x.id === agentId);
+  return (a?.identity?.name || a?.name || agentId || "비서").replace(/[(（].*?[)）]/g, "").trim();
+}
 
 /* 문장에 담당 에이전트 이름이 들어 있으면 그 에이전트 세션으로 바로 보낸다.
    화면과 같은 규칙(utils/agentRouting.ts) — 비서를 거치면 위임 결과를 자기 말로 다시 써서
@@ -75,7 +89,7 @@ function resolveAgent(nn, text) {
   }
   return best;
 }
-const sessionLabelFor = (week) => `두레이 대화 · ${week}`;
+
 
 /** 두레이에서 웹으로 건너올 링크 — 해당 주차 대화가 바로 열린다.
  *  UI 경로 규칙: /chat/<agentId>/<sessionTail> → sessionKey `agent:<agentId>:<tail>` (App.tsx).
@@ -91,7 +105,6 @@ function webLink(nn, week) {
 const IDLE_MS = 15_000;               // 평소에도 15초 안에는 잡는다
 const ACTIVE_MS = 5_000;              // 대화 중이면 더 촘촘히
 const ACTIVE_WINDOW_MS = 30 * 60_000;
-const AGENT_STICKY_MS = 30 * 60_000;  // 이름 없는 후속을 직전 담당에게 붙여 두는 기간 // 5분은 짧다 — 답 받고 6분 뒤 물으면 느려졌다(실측)
 const API = "https://api.dooray.com/messenger/v1/channels";
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -240,24 +253,20 @@ async function pollUser(u, state) {
       `   ${webLink(u.nn, isoWeek())}`,
     ].join("\n");
     const week = isoWeek();
-    /* 이름이 드러나면 그 에이전트, 아니면 **최근에 이야기하던 담당**으로 이어간다.
-       "거기서 두 번째 빼줘" 처럼 이름 없는 후속이 비서로 가면 맥락을 잃는다.
-       30분이 지나면 끊는다 — 한참 뒤의 새 요청까지 붙으면 엉뚱한 곳으로 간다. */
     const matched = resolveAgent(u.nn, text);
-    const recent = Date.now() - Number(state.lastAgentAt || 0) < AGENT_STICKY_MS;
-    const agentId = matched || (recent && state.lastAgent) || "secretary";
-    state.lastAgent = agentId;
-    state.lastAgentAt = Date.now();
-    const key = sessionKeyFor(week, agentId);
-    // 이름표는 세션마다 한 번씩
-    const labeled = state.labeledKeys || {};
-    const labelIfNew = labeled[key] ? null : sessionLabelFor(week);
-    const ok = await sendToSession(u.nn, body, key, labelIfNew);
-    if (ok && labelIfNew) {
-      labeled[key] = true;
-      state.labeledKeys = labeled;
+    let key = state.sessionKey;
+    let label = null;
+    if (matched || !key) {
+      // 담당을 불렀거나 이어갈 세션이 없으면 새로 시작한다
+      const agentId = matched || "secretary";
+      const now = new Date();
+      key = sessionKeyFor(week, agentId, `${now.getHours()}${String(now.getMinutes()).padStart(2, "0")}`);
+      label = sessionLabelWith(agentDisplayName(u.nn, agentId), now);
+      state.sessionKey = key;
+      log(`user${u.nn} → ${agentId} 새 대화 (${key.split(":").pop()})`);
     }
-    if (agentId !== "secretary") log(`user${u.nn} → ${agentId} 로 직행`);
+    const ok = await sendToSession(u.nn, body, key, label);
+    if (!ok) state.sessionKey = null;   // 실패한 세션을 붙들고 있지 않는다
     log(`user${u.nn} seq${m.seq} → ${ok ? "투입" : "실패"}: ${text.slice(0, 40)}`);
   }
 }
