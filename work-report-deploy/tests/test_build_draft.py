@@ -43,3 +43,12 @@ def test_carryover_done_absorbs():
     prev_next = [{"text": "로그인 오류 조치", "status": "next"}]
     out = apply_carryover([_it("로그인 오류 조치", "b1", status="done")], prev_next)
     assert len(out) == 1 and not out[0].get("carry")
+
+def test_drop_empty_for_many_businesses():
+    """담당 사업이 많은 사람(디자이너·팀장)은 빈 사업 나열이 노이즈 → 활동 있는 것만"""
+    bs = [{"id": f"b{i}", "name": f"사업{i}", "alias": f"별칭{i}"} for i in range(1, 8)]
+    items = [_it("작업A", "b1")]
+    kept = group_by_business(items, bs, drop_empty=True)
+    assert len(kept) == 1 and kept[0]["id"] == "b1"
+    shown = group_by_business(items, bs, drop_empty=False)
+    assert len(shown) == 7

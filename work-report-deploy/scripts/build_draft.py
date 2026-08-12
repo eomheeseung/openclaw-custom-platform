@@ -28,10 +28,13 @@ def split_common(items, businesses):
             [x for x in items if x.get("biz_id") not in ids])
 
 
-def group_by_business(items, businesses):
-    return [{"id": b["id"], "name": b["name"], "alias": b.get("alias", b["name"]),
-             "items": [x for x in items if x.get("biz_id") == b["id"]]}
-            for b in businesses]
+def group_by_business(items, businesses, drop_empty=False):
+    """활동 없는 사업도 남긴다 — 빠뜨림/없음 구분용.
+    단 담당 사업이 많으면(디자이너·팀장급 전 사업 접근) 빈 사업 나열이 노이즈라 drop_empty."""
+    groups = [{"id": b["id"], "name": b["name"], "alias": b.get("alias", b["name"]),
+               "items": [x for x in items if x.get("biz_id") == b["id"]]}
+              for b in businesses]
+    return [g for g in groups if g["items"]] if drop_empty else groups
 
 
 def find_unsourced(items):
@@ -82,8 +85,14 @@ def _load_prev_next(nn, date_from):
 def build(nn, date_from, date_to):
     base = paths.data_dir(nn)
     cfg = json.load(open(f"{base}/work-report/config.json"))
-    master = paths.load_businesses()
-    businesses = [b for b in master if nn in (b.get("members") or [])]
+    doc = paths.load_master()
+    master = doc.get("businesses", [])
+    all_access = nn in (doc.get("all_access") or [])
+    if all_access:
+        # 디자이너·팀장급: 전 사업이 분류 대상. 대신 활동 있는 사업만 보고서에 싣는다.
+        businesses = master
+    else:
+        businesses = [b for b in master if nn in (b.get("members") or [])]
 
     # 외부 연동 페이지가 저장한 토큰·memberId (integrations.json) 를 우선 사용
     try:
@@ -111,7 +120,8 @@ def build(nn, date_from, date_to):
     draft = {
         "period": f"{date_from}~{date_to}", "week": week, "ai": [],
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "businesses": group_by_business(grouped, businesses),
+        "businesses": group_by_business(grouped, businesses,
+                                        drop_empty=all_access or len(businesses) > 6),
         "common": common, "stats": stats, "failures": failures,
         "warnings": find_unsourced(items),
     }

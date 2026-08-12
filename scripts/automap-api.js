@@ -911,7 +911,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/work-report/businesses') {
     try {
       const d = JSON.parse(fs.readFileSync('/opt/openclaw/data/businesses.json', 'utf8'));
-      jsonRes(res, 200, { ok: true, businesses: d.businesses || [] });
+      jsonRes(res, 200, { ok: true, businesses: d.businesses || [], all_access: d.all_access || [] });
     } catch (e) { jsonRes(res, 500, { ok: false, error: e.message }); }
     return;
   }

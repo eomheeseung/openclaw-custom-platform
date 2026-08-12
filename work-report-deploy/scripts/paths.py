@@ -25,6 +25,23 @@ def data_dir(nn):
     return "/home/node/.openclaw" if in_container() else f"/opt/openclaw/data/user{nn}"
 
 
+def load_master():
+    """businesses.json 문서 전체 (all_access 포함)."""
+    urls = API_URLS if in_container() else list(reversed(API_URLS))
+    for u in urls:
+        try:
+            with urllib.request.urlopen(u, timeout=5) as r:
+                d = json.loads(r.read().decode())
+                if d.get("ok"):
+                    return d
+        except Exception:
+            continue
+    try:
+        return json.load(open(FILE_FALLBACK))
+    except Exception:
+        return {}
+
+
 def load_businesses():
     urls = API_URLS if in_container() else list(reversed(API_URLS))
     for u in urls:
