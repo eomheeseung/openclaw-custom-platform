@@ -185,6 +185,10 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
     <span class="place dooray">두레이 메신저</span>
   </div>
   <div class="s-body">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:7px">
+      두레이 대화방 목록에 <b>「TideClaw 비서」 방이 하나 생긴다</b> — 동료와의 1:1 대화처럼.
+      "나와의 대화"(개인 메모방)가 아니라 전용 방이고, 그 방에서는 <b>@ 없이 그냥 말하면 된다.</b>
+    </div>
     <div class="dooray-panel">
       <div class="dp-head">💬 TideClaw 비서</div>
       <div class="dp-body">
@@ -593,9 +597,12 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
       <tr><td><b>직군별 차이</b><br><span style="font-size:10px;color:var(--muted)">디자이너(Figma)·개발자(GitHub)</span></td>
           <td>손재민 시나리오는 두레이·메일 중심 — 다른 직군은 수집원이 다름</td>
           <td>툴 설정으로 흡수 (설계 반영됨). Figma 는 연동 자체가 신규 개발</td></tr>
-      <tr><td><b>두레이 계정 매핑</b></td>
-          <td>두레이에서 온 메시지가 누구의 비서로 가야 하는지</td>
-          <td>두레이 계정 ↔ userNN 매핑 테이블 필요 (B안 개발 범위에 포함)</td></tr>
+      <tr><td><b>두레이 연동 방식 확정</b></td>
+          <td>① 어떤 방에서 대화하나 ② 계정 매핑</td>
+          <td>전용 「비서」 방 1인 1개 · @ 불필요가 목표.
+          구현은 두레이가 지원하는 쪽으로 — <b>메신저 봇 API</b>(1:1 방, 이상적) 또는
+          <b>웹훅+트리거 단어</b>("/비서 …"). B안 착수 때 두레이 관리 콘솔에서 확인.
+          계정↔userNN 매핑 테이블 포함</td></tr>
     </table>
   </div>
 </div>
