@@ -146,8 +146,31 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
   </div>
   <div class="actor hidden-agent">
     <div class="a-emoji">🏢</div>
-    <div class="a-name">사업 주간보고</div>
-    <div class="a-role">무대 뒤. SR 조회 → HWPX.<br>역시 비서를 통해서만 만난다</div>
+    <div class="a-name">사업 주간보고 <span style="font-size:9px;color:var(--muted)">기관 제출용</span></div>
+    <div class="a-role">무대 뒤. SR 조회 → HWPX.<br>발주기관에 <b>제출하는</b> 보고서</div>
+  </div>
+</div>
+
+<!-- ══════ 장면 0 ══════ -->
+<div class="scene">
+  <div class="s-head">
+    <span class="s-day" style="background:#4b5563">최초<small>1회</small></span>
+    <div>
+      <div class="s-title">시작 전 — 딱 한 번의 설정</div>
+      <div class="s-sub">이게 없으면 목요일 cron 이 빈손으로 돈다</div>
+    </div>
+    <span class="place web">TideClaw 웹 · 설정</span>
+  </div>
+  <div class="s-body">
+    <table style="margin:0">
+      <tr><th style="width:16%">누가</th><th style="width:34%">무엇을</th><th>비고</th></tr>
+      <tr><td><b>관리자</b> (1회)</td><td>사업 마스터 등록 + <b>담당자 지정</b></td>
+          <td>같은 사업이 사람마다 다른 이름이 되는 걸 차단 (user02↔user13 ID 불일치 실측)</td></tr>
+      <tr><td><b>본인</b> (1회)</td><td>사용 툴 확인 · 메일 수신자 확인</td>
+          <td>기본값이 미리 채워져 있어 <b>확인만</b> — 미연동 툴은 비활성 표시</td></tr>
+      <tr><td colspan="3" style="color:var(--muted);font-size:10.5px">
+          이후로는 설정을 열 일이 없다. 조정은 대화로 "이번엔 드라이브도 봐줘" 한마디.</td></tr>
+    </table>
   </div>
 </div>
 
@@ -214,6 +237,12 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
         <span class="bnode">Incoming Webhook 으로 회신</span>
       </div>
     </div>
+    <div class="note">
+      <b>이 대화는 어디에 존재하나 — 웹의 비서와 같은 대화다</b>
+      두레이는 <b>같은 비서에게 들어가는 다른 문</b>일 뿐이다. webhooks 의 sessionKey 를
+      비서 세션으로 지정하면, 두레이에서 한 말이 <b>웹 대화창에도 그대로 남는다</b>.
+      오후에 웹을 열면 "어제 들어온 SR 요약" 대화가 이미 있고, "아까 그 두 건 상세히"로 이어갈 수 있다.
+    </div>
     <div class="note warn">
       <b>메신저의 한계는 명확히 한다</b>
       두레이에는 카드 UI(체크박스·표·버튼)가 없다. 메신저는 <b>짧은 질의와 알림</b>까지만.
@@ -227,28 +256,42 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
   <div class="s-head">
     <span class="s-day">수<small>14:00</small></span>
     <div>
-      <div class="s-title">사업 주간보고도 비서에게</div>
-      <div class="s-sub">에이전트를 골라 들어가지 않는다 — 화면은 하나</div>
+      <div class="s-title">기관 제출용 보고서가 필요한 날</div>
+      <div class="s-sub">비서 화면 상단에 늘 떠 있는 버튼 두 개 — 서로 다른 보고서다</div>
     </div>
     <span class="place web">TideClaw 웹</span>
   </div>
   <div class="s-body">
+
+    <div class="note" style="margin:0 0 11px">
+      <b>진입 구조 — 버튼은 "시작"이 아니라 "구분"이다</b>
+      비서 화면에는 빠른 실행 버튼이 항상 떠 있다. 두 버튼은 <b>완전히 다른 보고서</b>로 이어진다.
+      버튼을 안 누르고 말로 해도 되지만, 버튼이 확실하다 (장면 6).
+    </div>
+
+    <table style="margin:0 0 12px">
+      <tr><th style="width:30%">버튼</th><th style="width:26%">무엇</th><th>어디로 가나</th></tr>
+      <tr><td><b>📝 이번 주 업무보고</b></td><td>내가 한 일 · <b>사내</b></td><td>대표에게 가는 <b>메일</b> (금요일 그 보고)</td></tr>
+      <tr><td><b>🏢 사업 주간보고 <span class="pill warn">기관 제출용</span></b></td><td>사업 현황 · <b>대외</b></td><td>발주기관에 내는 <b>한글(HWPX) 파일</b></td></tr>
+    </table>
+
     <div class="web-panel">
-      <div class="wp-head">🤵 비서</div>
+      <div class="wp-head">🤵 비서 — 대화 없어도 버튼은 항상 위에</div>
       <div class="wp-body">
         <div style="display:flex;gap:6px;margin-bottom:9px">
           <span class="btn">📝 이번 주 업무보고</span>
-          <span class="btn p">🏢 사업 주간보고</span>
+          <span class="btn p">🏢 사업 주간보고 (기관 제출용)</span>
         </div>
-        <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">🏢 사업 주간보고</div></div>
+        <div style="font-size:10px;color:var(--muted);margin:-4px 0 8px">↑ 오늘은 오른쪽을 누른다 — e진로 기관 보고 제출일</div>
+        <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">🏢 사업 주간보고 (기관 제출용)</div></div>
         <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:82%">
           <div class="card">
-            <div class="c-hd">🏢 어느 사업 주간보고를 만들까요?</div>
+            <div class="c-hd">🏢 어느 사업 보고서를 만들까요?</div>
             <div class="it" style="border:1px solid rgba(15,118,110,.35);border-radius:8px;margin-bottom:4px">
               <span class="tx"><b>대한체육회 e진로지원센터</b> <span style="color:var(--muted);font-size:10px">· 마지막 사용 8/8</span></span>
             </div>
           </div>
-          <div style="font-size:10px;color:var(--muted);margin-top:3px">…이후 SR 조회 → 그룹핑 → 초안 → HWPX 다운로드 (기존 흐름 그대로, 화면만 비서)</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">…이후 SR 조회 → 그룹핑 → 초안 → HWPX 다운로드 (이미 쓰던 흐름 그대로 · 화면만 비서로 통일)</div>
         </div></div>
       </div>
     </div>
@@ -256,7 +299,7 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
       <div class="b-t">무대 뒤</div>
       <div class="bflow">
         <span class="bnode dashed">비서 → sessions_spawn(business-report)</span><span class="barw">›</span>
-        <span class="bnode dashed">business-report 가 JSON 반환<br><small style="color:var(--muted)">{"kind":"biz-picker","data":…} — 카드를 직접 뱉지 않음</small></span><span class="barw">›</span>
+        <span class="bnode dashed">business-report 가 JSON 반환<br><small style="color:var(--muted)">카드를 직접 뱉지 않음</small></span><span class="barw">›</span>
         <span class="bnode">비서가 카드로 재발행</span>
       </div>
     </div>
@@ -313,28 +356,73 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
     <span class="place web">TideClaw 웹</span>
   </div>
   <div class="s-body">
+
     <div class="web-panel">
       <div class="wp-head">🤵 비서</div>
       <div class="wp-body">
-        <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:88%">
-          <div class="card">
-            <div class="c-hd">📝 업무보고 초안 · 08-10 ~ 08-14</div>
-            <div class="biz">
-              <div class="bh"><span class="bn">대한체육회 e진로지원센터</span>
-                <span style="font-size:9.5px;color:var(--muted)">✓3 ◐1 ○2</span></div>
-              <div class="it"><span class="st d">✓</span><span class="tx">로그인 오류 조치</span><span class="sr">두레이 #163 ↗</span></div>
-              <div class="it"><span class="st d">✓</span><span class="tx">문구·오탈자 수정 등 3건 <span style="font-size:8.5px;color:var(--muted)">묶음</span></span><span class="sr">두레이 ↗</span></div>
-              <div class="it"><span class="st w">◐</span><span class="tx">통계 화면 개선 <span class="carry">지난주 예정 → 계속*</span></span><span class="sr">두레이 #158 ↗</span></div>
-              <div class="it"><span class="st n">○</span><span class="tx">정기 점검 일정 협의</span><span class="sr">캘린더 8/18 ↗</span></div>
+        <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:92%">
+
+          <!-- ── 초안 카드 · 새 형태: 보고서 그대로 미리보기 ── -->
+          <div class="card" style="padding:0;overflow:hidden">
+            <div style="background:rgba(15,118,110,.07);padding:9px 13px;display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-weight:800;color:var(--accent)">📝 업무보고 초안</span>
+              <span style="font-size:10px;color:var(--muted)">08-10 ~ 08-14 · 어제 17:03 자동 생성</span>
             </div>
-            <div class="biz">
-              <div class="bh"><span class="bn" style="color:var(--purple)">공통 · 기타</span></div>
-              <div class="it"><span class="st d">✓</span><span class="tx">기술구현그룹 회의 참석</span><span class="sr">캘린더 8/11 ↗</span></div>
+
+            <!-- 한눈 요약 -->
+            <div style="display:flex;gap:0;border-bottom:1px solid #f0eee7;text-align:center">
+              <div style="flex:1;padding:8px 0;border-right:1px solid #f0eee7">
+                <div style="font-size:17px;font-weight:800;color:var(--emerald)">5</div>
+                <div style="font-size:9.5px;color:var(--muted)">완료</div>
+              </div>
+              <div style="flex:1;padding:8px 0;border-right:1px solid #f0eee7">
+                <div style="font-size:17px;font-weight:800;color:var(--amber)">2</div>
+                <div style="font-size:9.5px;color:var(--muted)">진행중</div>
+              </div>
+              <div style="flex:1;padding:8px 0">
+                <div style="font-size:17px;font-weight:800;color:#6b7280">3</div>
+                <div style="font-size:9.5px;color:var(--muted)">차주 예정</div>
+              </div>
             </div>
-            <div style="display:flex;justify-content:flex-end;gap:5px;margin-top:7px">
-              <span class="btn">📄 메일 형태로 보기</span><span class="btn p">✓ 확정</span>
+
+            <!-- 보고서 구조 그대로: ■ 완료 -->
+            <div style="padding:9px 13px 3px">
+              <div style="font-size:11px;font-weight:800;color:var(--emerald);margin-bottom:3px">■ 완료</div>
+              <div class="it" style="border:none;padding:2px 0 2px 8px">
+                <span class="tx"><b style="color:var(--accent);font-size:10px">[e진로]</b> 로그인 오류 조치</span>
+                <span class="sr">두레이 #163 ↗</span></div>
+              <div class="it" style="border:none;padding:2px 0 2px 8px">
+                <span class="tx"><b style="color:var(--accent);font-size:10px">[e진로]</b> 문구·오탈자 수정 등 3건 <span style="font-size:8.5px;color:var(--muted)">묶음</span></span>
+                <span class="sr">두레이 ↗</span></div>
+              <div class="it" style="border:none;padding:2px 0 2px 8px">
+                <span class="tx">기술구현그룹 회의 참석</span>
+                <span class="sr">캘린더 8/11 ↗</span></div>
+            </div>
+
+            <!-- ■ 진행 · 차주 계획 -->
+            <div style="padding:6px 13px 3px">
+              <div style="font-size:11px;font-weight:800;color:var(--amber);margin-bottom:3px">■ 진행 · 차주 계획</div>
+              <div class="it" style="border:none;padding:2px 0 2px 8px">
+                <span class="tx"><b style="color:var(--accent);font-size:10px">[e진로]</b> 통계 화면 개선 <span class="carry">지난주 예정 → 계속*</span></span>
+                <span class="sr">두레이 #158 ↗</span></div>
+              <div class="it" style="border:none;padding:2px 0 2px 8px">
+                <span class="tx"><b style="color:var(--accent);font-size:10px">[e진로]</b> 정기 점검 일정 협의</span>
+                <span class="sr">캘린더 8/18 ↗</span></div>
+            </div>
+
+            <!-- ■ AI 툴 활용 -->
+            <div style="padding:6px 13px 9px">
+              <div style="font-size:11px;font-weight:800;color:var(--purple);margin-bottom:3px">■ 업무 - AI 툴 활용</div>
+              <div class="it" style="border:none;padding:2px 0 2px 8px">
+                <span class="tx">주간보고 자동 생성 적용</span><span class="sr no">직접 입력</span></div>
+            </div>
+
+            <div style="border-top:1px solid #f0eee7;padding:8px 13px;display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:9.5px;color:var(--muted)">✏️ 항목을 클릭하면 바로 수정 · 이대로 메일이 됩니다</span>
+              <span class="btn p">✓ 확정</span>
             </div>
           </div>
+
         </div></div>
         <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">통계 화면 개선에 "8월 내 배포 목표" 붙여줘. 그리고 확정</div></div>
         <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:82%">
@@ -349,11 +437,52 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
         </div></div>
       </div>
     </div>
+
+    <div class="note" style="margin-top:12px">
+      <b>왜 이 형태인가 — 보고서와 화면이 같은 모양</b>
+      메일이 <b>■ 완료 / ■ 진행·차주</b> 로 나가니까, 화면도 그 구조 그대로 보여준다.
+      화면에서 본 것 = 발송되는 것. 사업 구분은 <b>[e진로]</b> 태그로 항목 앞에 붙는다 (메일에도 동일하게 감).
+      「메일 형태로 보기」 버튼이 필요 없어졌다.
+    </div>
+
+    <details style="margin-top:10px">
+      <summary style="font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer">다른 형태 2안 — 비교해 보려면 펼치기</summary>
+      <div class="two" style="margin-top:10px">
+        <div>
+          <div style="font-size:10.5px;font-weight:800;margin-bottom:5px">B안 · 사업별 묶음 <span style="color:var(--muted);font-weight:400">(이전 목업 형태)</span></div>
+          <div class="card" style="margin:0">
+            <div class="biz">
+              <div class="bh"><span class="bn">e진로지원센터</span><span style="font-size:9px;color:var(--muted)">✓2 ◐2</span></div>
+              <div class="it"><span class="st d">✓</span><span class="tx">로그인 오류 조치</span></div>
+              <div class="it"><span class="st w">◐</span><span class="tx">통계 화면 개선</span></div>
+            </div>
+            <div class="biz">
+              <div class="bh"><span class="bn" style="color:var(--purple)">공통</span></div>
+              <div class="it"><span class="st d">✓</span><span class="tx">회의 참석</span></div>
+            </div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px">
+            사업이 3개+ 인 사람(김다영)에겐 유리. 단 <b>메일 구조와 달라</b> 발송본을 따로 확인해야 함.
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10.5px;font-weight:800;margin-bottom:5px">C안 · 상태 3단 보드</div>
+          <div class="card" style="margin:0;display:flex;gap:6px;font-size:10px">
+            <div style="flex:1"><b style="color:var(--emerald)">✓ 완료</b><div style="background:var(--bg);border-radius:6px;padding:4px 6px;margin-top:3px">로그인 오류 조치</div></div>
+            <div style="flex:1"><b style="color:var(--amber)">◐ 진행</b><div style="background:var(--bg);border-radius:6px;padding:4px 6px;margin-top:3px">통계 화면 개선</div></div>
+            <div style="flex:1"><b style="color:#6b7280">○ 차주</b><div style="background:var(--bg);border-radius:6px;padding:4px 6px;margin-top:3px">점검 일정 협의</div></div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px">
+            훑기엔 좋으나 항목이 길면 좁은 칸에서 줄바꿈이 심해짐. 채팅 카드 폭에 불리.
+          </div>
+        </div>
+      </div>
+    </details>
+
     <div class="note q">
       <b>* 결정 대기 A — 이월 대조</b>
       「지난주 예정 → 계속」 표시는 직전 draft.json 과 대조해야 나온다.
-      이게 있으면 "지난주에 하겠다던 걸 했는가"가 이어진다 — 보고가 관리가 되는 지점.
-      <b>미결정 상태. 채택 여부 판단 필요.</b>
+      이게 있으면 "지난주에 하겠다던 걸 했는가"가 이어진다. <b>미결정.</b>
     </div>
   </div>
 </div>
@@ -410,7 +539,7 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
       <tr><th style="width:11%">언제</th><th style="width:17%">어디서</th><th>무엇이</th><th style="width:15%">사람이 하는 일</th></tr>
       <tr><td>월 09:50</td><td>두레이</td><td>아침 브리핑 도착</td><td>읽기</td></tr>
       <tr><td>평일 수시</td><td>두레이</td><td>한 줄 지시 → 요약 회신 <span class="pill warn">신규 개발</span></td><td>한 줄</td></tr>
-      <tr><td>필요 시</td><td>웹</td><td>사업 주간보고 (비서 경유) <span class="pill warn">전환</span></td><td>버튼 + 확인</td></tr>
+      <tr><td>필요 시</td><td>웹</td><td>사업 주간보고 · 기관 제출용 (비서 경유) <span class="pill warn">전환</span></td><td>버튼 + 확인</td></tr>
       <tr><td>목 17:00</td><td>자동</td><td>업무보고 초안 생성 → 두레이 알림 <span class="pill warn">신규</span></td><td><b>없음</b></td></tr>
       <tr><td>금 오전</td><td>웹</td><td>초안 확인 → 수정 한마디 → 발송 <span class="pill warn">신규</span></td><td><b>~2분</b></td></tr>
     </table>
@@ -422,4 +551,38 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
   </div>
 </div>
 
+
+<!-- ══════ 점검 ══════ -->
+<div class="scene" style="border-color:rgba(225,29,72,.3)">
+  <div class="s-head">
+    <span class="s-day" style="background:var(--rose)">점검</span>
+    <div>
+      <div class="s-title">이 시나리오가 아직 안 다루는 것</div>
+      <div class="s-sub">설계 확정 전에 봐야 할 케이스들</div>
+    </div>
+  </div>
+  <div class="s-body">
+    <table style="margin:0">
+      <tr><th style="width:24%">케이스</th><th style="width:44%">무슨 일이 생기나</th><th>제안</th></tr>
+      <tr><td><b>금요일이 공휴일·연차</b></td>
+          <td>초안 확인·발송할 사람이 없다</td>
+          <td>목요일 알림에 "내일 휴무 — 오늘 발송할까요?" 분기. 기존 user13 cron 에 이미 있던 로직을 승계</td></tr>
+      <tr><td><b>수집 부분 실패</b><br><span style="font-size:10px;color:var(--muted)">예: Gmail 토큰 만료</span></td>
+          <td>메일 항목만 빠진 초안이 만들어짐 — 빠진 걸 모르고 발송할 위험</td>
+          <td>초안 카드 상단에 "⚠ Gmail 수집 실패 — 재연동" 배지. 알림에도 명시</td></tr>
+      <tr><td><b>발송 후 정정</b></td>
+          <td>메일은 회수 불가</td>
+          <td>"정정 재발송" 은 제목에 [재발송] 붙여 명시적으로만. 자동화하지 않음</td></tr>
+      <tr><td><b>지난 보고서 다시 보기</b></td>
+          <td>draft.json 이 매주 덮어써지면 이력이 사라짐</td>
+          <td>주차별 보관 (draft-2026-W33.json). 보존 주기는 결정 필요</td></tr>
+      <tr><td><b>직군별 차이</b><br><span style="font-size:10px;color:var(--muted)">디자이너(Figma)·개발자(GitHub)</span></td>
+          <td>손재민 시나리오는 두레이·메일 중심 — 다른 직군은 수집원이 다름</td>
+          <td>툴 설정으로 흡수 (설계 반영됨). Figma 는 연동 자체가 신규 개발</td></tr>
+      <tr><td><b>두레이 계정 매핑</b></td>
+          <td>두레이에서 온 메시지가 누구의 비서로 가야 하는지</td>
+          <td>두레이 계정 ↔ userNN 매핑 테이블 필요 (B안 개발 범위에 포함)</td></tr>
+    </table>
+  </div>
+</div>
 </div>
