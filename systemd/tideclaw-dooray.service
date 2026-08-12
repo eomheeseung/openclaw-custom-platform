@@ -1,0 +1,15 @@
+[Unit]
+Description=TideClaw 두레이 수신 데몬 (폴링 → 비서 세션 투입)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /opt/openclaw/work-report-deploy/scripts/dooray-poll.mjs
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/tideclaw-dooray.log
+StandardError=append:/var/log/tideclaw-dooray.log
+
+[Install]
+WantedBy=multi-user.target

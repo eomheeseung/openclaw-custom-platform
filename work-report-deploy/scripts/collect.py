@@ -13,6 +13,8 @@
 """
 import json
 import subprocess
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 
 BLOCKED_TOOLS = {"sr"}
 KNOWN_TOOLS = ["dooray", "gmail", "calendar", "drive", "github", "figma"]
@@ -24,11 +26,22 @@ def tool_enabled(tools, name):
     return name in (tools or [])
 
 
+def _iso(at):
+    """gmail 의 date 는 RFC 2822 형식이라 ISO 로 맞춘다 (기간비교·정렬·표시 공통)."""
+    at = (at or "").strip()
+    if not at or at[:4].isdigit():
+        return at
+    try:
+        return parsedate_to_datetime(at).isoformat()
+    except Exception:
+        return ""
+
+
 def normalize_item(raw, source, biz_id=None, url=None, status="done", **extra):
     text = (raw.get("subject") or raw.get("title") or raw.get("name")
             or raw.get("summary") or "").strip()
-    at = (raw.get("updatedAt") or raw.get("date") or raw.get("modified")
-          or raw.get("start") or "")
+    at = _iso(raw.get("updatedAt") or raw.get("date") or raw.get("modified")
+              or raw.get("start") or "")
     it = {"text": text, "source": source, "url": url,
           "biz_id": biz_id, "at": at, "status": status}
     it.update(extra)          # project / project_id / repo — classify 가 매핑에 씀
@@ -56,7 +69,24 @@ def dooray_projects():
     return [p for p in d.get("projects", []) if p.get("state") != "archived"], True
 
 
-def collect_dooray(member_id=None):
+WIP_STALE_DAYS = 28       # 진행중 task 를 '살아있다'고 볼 최대 방치 기간
+
+
+def _days_before(date_str, days):
+    return (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def in_period(at, date_from, date_to):
+    """수집 항목이 보고 기간에 드는지. dooray CLI 는 기간 파라미터가 없어
+    (dooray tasks <pid> [size] [status] [memberIds] …) 클라이언트에서 걸러야 한다.
+    이 필터가 없으면 1년치 과거 task 가 주간보고에 딸려 들어온다 (실측 128건)."""
+    d = (at or "")[:10]
+    if not d:
+        return False              # 날짜를 모르면 이번 주 것으로 보지 않는다
+    return date_from <= d <= date_to
+
+
+def collect_dooray(date_from, date_to, member_id=None):
     projects, ok_all = dooray_projects()
     if not ok_all:
         return [], False
@@ -68,9 +98,16 @@ def collect_dooray(member_id=None):
             ok, d = _run(f"dooray tasks {pid} 50 {status} {member}".strip())
             ok_all = ok_all and ok
             for t in d.get("tasks", []):
-                url = f"https://tideflo.dooray.com/task/{pid}/{t.get('id')}"
-                items.append(normalize_item(t, "dooray", None, url, mapped,
-                                            project=pname, project_id=pid))
+                it = normalize_item(t, "dooray", None,
+                                    f"https://tideflo.dooray.com/task/{pid}/{t.get('id')}",
+                                    mapped, project=pname, project_id=pid)
+                # 완료(done)는 이번 주에 끝낸 것만.
+                # 진행중(wip)은 이번 주 갱신이 없어도 '계속 하는 일'이라 남기되,
+                # 최근 갱신분까지만 — 실측상 1년 넘게 열려만 있는 방치 task 가 다수다.
+                lo = date_from if mapped == "done" else _days_before(date_from, WIP_STALE_DAYS)
+                if not in_period(it["at"], lo, date_to):
+                    continue
+                items.append(it)
     return items, ok_all
 
 
@@ -83,15 +120,18 @@ def collect_gmail(date_from, date_to):
     return items, ok
 
 
-def collect_calendar(days=7):
+def collect_calendar(days=7, date_from=None, date_to=None):
     ok, d = _run(f"gog calendar list {days}")
     items = []
     for e in d.get("events", []):
-        items.append(normalize_item(e, "calendar", None, e.get("htmlLink"), "done"))
+        it = normalize_item(e, "calendar", None, e.get("htmlLink"), "done")
+        if date_from and not in_period(it["at"], date_from, date_to):
+            continue
+        items.append(it)
     return items, ok
 
 
-def collect_drive(days=7):
+def collect_drive(days=7, date_from=None, date_to=None, member_name=None):
     """공유 드라이브명을 컨테이너로 삼아 매핑 (parents 가 드라이브 루트인 경우).
     그 외 파일은 파일명 키워드 / LLM 보정에 맡긴다."""
     ok_s, ds = _run("gog drive shared")
@@ -99,6 +139,12 @@ def collect_drive(days=7):
     ok, d = _run(f"gog drive recent {days}")
     items = []
     for f in d.get("files", []):
+        # 공유 드라이브에는 팀원이 수정한 파일이 함께 잡힌다 — 깃헙 author 필터와 같은 이유로 본인 것만.
+        by = f.get("modifiedBy")
+        if member_name and by and member_name not in by:
+            continue
+        if date_from and not in_period(f.get("modified"), date_from, date_to):
+            continue
         url = f"https://drive.google.com/file/d/{f.get('id')}/view"
         container = None
         for parent in f.get("parents") or []:
@@ -170,13 +216,13 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
             failures.append(name)
 
     if tool_enabled(tools, "dooray"):
-        take("dooray", *collect_dooray(member_id))
+        take("dooray", *collect_dooray(date_from, date_to, member_id))
     if tool_enabled(tools, "gmail"):
         take("gmail", *collect_gmail(date_from, date_to))
     if tool_enabled(tools, "calendar"):
-        take("calendar", *collect_calendar())
+        take("calendar", *collect_calendar(7, date_from, date_to))
     if tool_enabled(tools, "drive"):
-        take("drive", *collect_drive())
+        take("drive", *collect_drive(7, date_from, date_to, figma_name))
     if tool_enabled(tools, "github"):
         g = github or {}
         take("github", *collect_github(g.get("owner"), date_from, date_to,
