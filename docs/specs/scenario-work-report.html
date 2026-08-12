@@ -275,28 +275,23 @@ td{padding:5px 9px;border-bottom:1px solid #f0eee7;vertical-align:top}
   <div class="s-body">
 
     <div class="note" style="margin:0 0 11px">
-      <b>진입 구조 — 버튼은 "시작"이 아니라 "구분"이다</b>
-      비서 화면 입력창 위에 빠른 실행 버튼이 <b>요일과 무관하게 항상</b> 떠 있다
-      (지금의 「오늘 뭐해?」 칩과 같은 자리). 요일은 UI 가 바뀌는 게 아니라 <b>언제 쓰게 되는가</b>의 예시다. 두 버튼은 <b>완전히 다른 보고서</b>로 이어진다.
-      버튼을 안 누르고 말로 해도 되지만, 버튼이 확실하다 (장면 6).
-      <b>사용자는 에이전트를 고르지 않는다</b> — 버튼도 자연어도 "업무"를 말할 뿐, 누가 할지는 비서가 정한다.
+      <b>진입은 자연어 — 상시 버튼은 두지 않는다</b>
+      에이전트가 늘 때마다 버튼이 늘어나는 구조는 확장에서 파산한다.
+      그냥 <b>말하면</b> 비서가 위임 규칙(키워드)으로 알아서 배분하고, 애매하면 한 번 되묻는다(장면 6).
+      반복 업무(주간보고)는 어차피 <b>푸시가 먼저 온다</b> — 시킬 일 자체가 드물다.
+      버튼은 대화 안의 카드(확정·발송 등 맥락 행동)에만 존재한다.
     </div>
 
     <table style="margin:0 0 12px">
-      <tr><th style="width:30%">버튼</th><th style="width:26%">무엇</th><th>어디로 가나</th></tr>
-      <tr><td><b>📝 이번 주 업무보고</b></td><td>내가 한 일 · <b>사내</b></td><td>대표에게 가는 <b>메일</b> (금요일 그 보고)</td></tr>
-      <tr><td><b>🏢 사업 주간보고 <span class="pill warn">기관 제출용</span></b></td><td>사업 현황 · <b>대외</b></td><td>발주기관에 내는 <b>한글(HWPX) 파일</b></td></tr>
+      <tr><th style="width:32%">이렇게 말하면</th><th style="width:26%">무엇</th><th>어디로 가나</th></tr>
+      <tr><td>"업무보고 초안 만들어줘"</td><td>내가 한 일 · <b>사내</b></td><td>대표에게 가는 <b>메일</b> (금요일 그 보고)</td></tr>
+      <tr><td>"e진로 사업 주간보고 만들어줘"</td><td>사업 현황 · <b>대외</b></td><td>발주기관에 내는 <b>한글(HWPX) 파일</b></td></tr>
     </table>
 
     <div class="web-panel">
-      <div class="wp-head">🤵 비서 — 대화 없어도 버튼은 항상 위에</div>
+      <div class="wp-head">🤵 비서</div>
       <div class="wp-body">
-        <div style="display:flex;gap:6px;margin-bottom:9px">
-          <span class="btn">📝 이번 주 업무보고</span>
-          <span class="btn p">🏢 사업 주간보고 (기관 제출용)</span>
-        </div>
-        <div style="font-size:10px;color:var(--muted);margin:-4px 0 8px">↑ 오늘은 오른쪽을 누른다 — e진로 기관 보고 제출일</div>
-        <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">🏢 사업 주간보고 (기관 제출용)</div></div>
+        <div class="wmsg me"><div class="wav me">손</div><div class="wbub me">e진로 사업 주간보고 만들어줘</div></div>
         <div class="wmsg"><div class="wav">🤵</div><div style="flex:1;max-width:82%">
           <div class="card">
             <div class="c-hd">🏢 어느 사업 보고서를 만들까요?</div>
