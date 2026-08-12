@@ -7,6 +7,7 @@ import { User, Bot, Loader2, Copy, Download, Check, CheckCircle2, Building2, Ale
 import type { Message, Agent } from '../types';
 import { shouldHideMessage, cleanDisplayContent, stripUserWrapper } from '../utils/messageFilter';
 import { SrTableCard, WeekPickerCard, GroupingEditorCard, DraftCard, DownloadCard, parseSrBaseline, parseGroupingConfirm, type SrBaselineItem, type ConfirmedGroup } from './MessageCards';
+import { WorkDraftCard, ToolPickCard } from './WorkReportCards';
 
 /* 사용자 메시지에서 [파일: xxx] 라벨 다음의 inline 텍스트를 라벨만 남기고 제거 */
 function trimFileContent(content: string): string {
@@ -412,6 +413,8 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
                                 if (cls.includes('language-grouping-editor')) return <GroupingEditorCard raw={raw} onSelect={onSendMessage} messageId={message.id} />;
                                 if (cls.includes('language-draft-card'))       return <DraftCard raw={raw} onSelect={onSendMessage} onPrefill={onPrefill} srBaseline={findSrBaselineBefore(filtered, idx)} confirmedGroups={findGroupingConfirmBefore(filtered, idx)} />;
                                 if (cls.includes('language-download-card'))    return <DownloadCard raw={raw} onSelect={onSendMessage} />;
+                                if (cls.includes('language-work-draft'))       return <WorkDraftCard raw={raw} onSelect={onSendMessage} />;
+                                if (cls.includes('language-tool-pick'))        return <ToolPickCard raw={raw} onSelect={onSendMessage} />;
                               }
                               return (
                                 <pre className="bg-[#f5f4f0] border border-[#e8e6e0] rounded-lg p-3 overflow-x-auto my-2 text-sm">

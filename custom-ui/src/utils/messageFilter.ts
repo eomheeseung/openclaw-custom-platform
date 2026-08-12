@@ -86,6 +86,8 @@ const CARD_FENCE_MARKERS: readonly string[] = [
   '```grouping-editor',
   '```draft-card',
   '```download-card',
+  '```work-draft',
+  '```tool-pick',
 ];
 
 /* 본문에 RAG 결과·exec 래퍼·시스템 덤프 마커가 하나라도 있으면 raw 덤프.
