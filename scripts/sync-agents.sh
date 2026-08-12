@@ -372,6 +372,21 @@ for a in dc_specialists:
 
 # 7. 웹 에이전트용 AGENTS.md (디스코드 에이전트는 AGENTS.md 불필요)
 keyword_map = {
+    # 보고 계열 — 발화 기준 키워드 (2026-08-12 업무보고 개편)
+    'work-report': '업무보고, 내 업무, 이번 주 한 일, 주간 업무, 메일 주간보고',
+    'business-report': '사업 주간보고, 사업보고, 기관 보고, SR, HWPX, 한글 보고서',
+    # 기존 커스텀 에이전트 — 위임 통로 (없는 사용자에겐 표에 안 나감)
+    'docwriter': '문서 작성, 문서 초안, 공문',
+    'doc-writer': '문서 작성, 문서 초안, 공문',
+    'designer': '디자인, 시안, 배너, 이미지 제작',
+    'planmanager': '일정 관리, 스케줄 정리',
+    'maillng': '메일 정리, 메일 분류',
+    'mail-mgr': '메일 정리, 메일 분류',
+    'meetingnotes': '회의록, 회의 정리',
+    'contractreviewer': '계약서 검토, 계약 조항',
+    'dataanalyst': '데이터 분석, 통계 분석',
+    'publicsectorpro': '입찰, 공고, 나라장터, 제안 전략',
+    'bid-reviewer': '제안서 검토, 입찰 서류 검토',
     'developer': '코드, 개발, 구현, 프로그래밍',
     'reviewer': '검토, 리뷰, 피드백, 품질',
     'planner': '기획, 전략, 로드맵, 계획',
