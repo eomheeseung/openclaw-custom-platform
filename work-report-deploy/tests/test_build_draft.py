@@ -1,3 +1,4 @@
+import json
 import sys
 sys.path.insert(0, '/opt/openclaw/work-report-deploy/scripts')
 from week_util import week_label, prev_week_label
@@ -52,3 +53,21 @@ def test_drop_empty_for_many_businesses():
     assert len(kept) == 1 and kept[0]["id"] == "b1"
     shown = group_by_business(items, bs, drop_empty=False)
     assert len(shown) == 7
+
+
+def test_draft_carries_profile_and_recipients(tmp_path, monkeypatch):
+    """비서가 config 를 안 읽고 소속·직책·수신자를 지어낸 사고가 있었다"""
+    import build_draft
+    cfg = {"tools": [], "profile": {"team": "전략사업팀", "name": "손재민", "title": "매니저"},
+           "recipients": {"to": ["boss@tideflo.com"], "cc": []}}
+    d = tmp_path / "work-report"
+    d.mkdir()
+    (d / "config.json").write_text(json.dumps(cfg, ensure_ascii=False))
+    monkeypatch.setattr(build_draft.paths, "data_dir", lambda nn: str(tmp_path))
+    monkeypatch.setattr(build_draft.paths, "load_master", lambda: {"businesses": []})
+    monkeypatch.setattr(build_draft, "collect", lambda *a, **k: ([], {}, []))
+    monkeypatch.setattr(build_draft.run_log, "record", lambda *a, **k: None)
+    _, draft = build_draft.build("02", "2026-08-10", "2026-08-14")
+    assert draft["profile"]["team"] == "전략사업팀"
+    assert draft["profile"]["title"] == "매니저"
+    assert draft["recipients"]["to"] == ["boss@tideflo.com"]

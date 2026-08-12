@@ -117,8 +117,12 @@ def build(nn, date_from, date_to):
 
     grouped, common = split_common(items, businesses)
     week = week_label(date_from)
+    # profile·recipients 를 초안에 실어 보낸다 — 비서가 config 를 따로 읽지 않고
+    # 소속·직책·수신자를 **지어낸** 사고가 있었다(실측: 기술구현그룹→"AI팀", 매니저→"선임연구원",
+    # 수신자가 설정돼 있는데도 "정해달라"고 물음). 초안에 있으면 지어낼 여지가 없다.
     draft = {
         "period": f"{date_from}~{date_to}", "week": week, "ai": [],
+        "profile": cfg.get("profile") or {}, "recipients": cfg.get("recipients") or {},
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "businesses": group_by_business(grouped, businesses,
                                         drop_empty=all_access or len(businesses) > 6),
