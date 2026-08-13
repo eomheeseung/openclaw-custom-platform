@@ -311,6 +311,9 @@ def collect_github(owner, date_from, date_to, token=None, author=None):
                 if not sha or sha in seen:
                     continue            # 브랜치가 겹치면 같은 커밋이 여러 번 잡힌다
                 seen.add(sha)
+                # 병합 커밋(부모 2개 이상)은 자동 생성 메시지라 업무 내용이 없다
+                if len(c.get("parents") or []) > 1:
+                    continue
                 msg = (c.get("commit") or {}).get("message", "").split("\n")[0]
                 items.append(normalize_item(
                     {"title": msg, "date": (c.get("commit") or {}).get("author", {}).get("date")},

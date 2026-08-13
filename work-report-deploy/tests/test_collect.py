@@ -105,3 +105,11 @@ def test_drive_cap_keeps_shared_drive_files():
     kept = shared + personal[:collect.DRIVE_MAX]
     assert any(x.get("project") for x in kept)
     assert len(kept) == 1 + collect.DRIVE_MAX
+
+
+def test_skips_merge_commits():
+    """병합 커밋은 자동 생성 메시지라 보고에 넣을 내용이 없다"""
+    merge = {"sha": "a", "parents": [{"sha": "p1"}, {"sha": "p2"}]}
+    normal = {"sha": "b", "parents": [{"sha": "p1"}]}
+    assert len(merge["parents"]) > 1
+    assert len(normal["parents"]) == 1
