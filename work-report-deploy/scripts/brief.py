@@ -197,7 +197,8 @@ def sr_summary(nn, today):
 
 def compose(nn, now):
     today = now.strftime("%Y-%m-%d")
-    lines = [f"☀ {now.strftime('%m월 %d일')} 브리핑", ""]
+    hello = CLOSING.get(now.weekday(), CLOSING[1])
+    lines = [f"☀ {now.strftime('%m월 %d일')} 브리핑 · {hello}", ""]
 
     ev = today_events(nn, today)
     lines.append("■ 오늘 일정")
@@ -242,7 +243,6 @@ def compose(nn, now):
     else:
         lines.append("· 없음")
 
-    lines += ["", CLOSING.get(now.weekday(), CLOSING[1])]
     return "\n".join(lines)
 
 
