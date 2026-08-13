@@ -2312,7 +2312,14 @@ const server = http.createServer(async (req, res) => {
         let apiUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&pageSize=${cappedPageSize}&fields=${encodeURIComponent(fields)}&includeItemsFromAllDrives=true&supportsAllDrives=true&${corporaParams}&orderBy=modifiedTime desc`;
         if (pageToken) apiUrl += `&pageToken=${encodeURIComponent(pageToken)}`;
 
-        const result = await gmailApiRequest('GET', apiUrl, accessToken);
+        /* 구글 드라이브가 간헐적으로 500 "Internal Error" 를 준다 (실측 5회 중 1회).
+           같은 요청을 잠깐 뒤에 다시 보내면 대개 성공하므로 여기서 삼킨다.
+           호출하는 쪽에서 재시도하면 앞 페이지부터 다시 받아야 해서 비싸다. */
+        let result = await gmailApiRequest('GET', apiUrl, accessToken);
+        for (let retry = 0; retry < 2 && (result.status >= 500 || result.status === 429); retry++) {
+          await new Promise(r => setTimeout(r, 400 * (retry + 1)));
+          result = await gmailApiRequest('GET', apiUrl, accessToken);
+        }
         if (result.status >= 400) {
           jsonRes(res, result.status, { ok: false, error: result.data?.error?.message || 'Search failed', page, totalFetched });
           return;
