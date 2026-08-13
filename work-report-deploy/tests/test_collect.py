@@ -92,3 +92,16 @@ def test_filters_place_only_calendar():
     assert RE_CAL_NOISE.match("사무실")
     assert RE_CAL_NOISE.match("재택")
     assert not RE_CAL_NOISE.match("주간업무보고 회의")
+
+
+def test_drive_cap_keeps_shared_drive_files():
+    """공유 드라이브 = 사업이 특정되는 실제 산출물 — 상한에 밀려 사라지면 안 된다"""
+    import collect
+    items = ([{"project": None, "at": f"2026-08-1{i%5}"} for i in range(100)]
+             + [{"project": "금연서비스 통합정보시스템", "at": "2026-08-10"}])
+    items.sort(key=lambda x: x.get("at") or "", reverse=True)
+    shared = [x for x in items if x.get("project")]
+    personal = [x for x in items if not x.get("project")]
+    kept = shared + personal[:collect.DRIVE_MAX]
+    assert any(x.get("project") for x in kept)
+    assert len(kept) == 1 + collect.DRIVE_MAX

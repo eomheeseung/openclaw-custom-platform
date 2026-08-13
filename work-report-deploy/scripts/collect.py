@@ -241,11 +241,13 @@ def collect_drive(nn, date_from, date_to, member_email=None):
         items.append(normalize_item(
             {"title": name, "date": f.get("modifiedTime")}, "drive", None,
             f.get("webViewLink"), "done", project=container))
-    # 산출물이 많은 주에는 수십 건이 나온다. 최신순으로 잘라 다듬기 단계의 부담을 줄인다.
+    # 산출물이 많은 주에는 수십 건이 나온다(실측 122건). 최신순으로 잘라 다듬기 부담을 줄이되,
+    # **공유 드라이브 파일은 자르지 않는다** — 사업이 특정되는 실제 산출물이라
+    # 상한에 밀려 사라지면 보고에서 누락된다. 개인 드라이브만 상한을 적용한다.
     items.sort(key=lambda x: x.get("at") or "", reverse=True)
-    if len(items) > DRIVE_MAX:
-        items = items[:DRIVE_MAX]
-    return items, True
+    shared = [x for x in items if x.get("project")]
+    personal = [x for x in items if not x.get("project")]
+    return shared + personal[:DRIVE_MAX], True
 
 
 def collect_github(owner, date_from, date_to, token=None, author=None):
