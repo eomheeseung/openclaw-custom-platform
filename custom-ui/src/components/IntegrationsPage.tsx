@@ -128,6 +128,17 @@ export function IntegrationsPage() {
     } finally { setSaving(''); }
   };
 
+  const deleteFigma = async () => {
+    setSaving('figma-del');
+    try {
+      await fetch('/api/integrations/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ figma: { token: '', expiresAt: '', userId: '', handle: '', fileKeys: [], updatedAt: '' }, userNN: getUserNN() }),
+      });
+      await loadInt();
+    } finally { setSaving(''); }
+  };
+
   const removeFigmaFile = async (key: string) => {
     const prev = (intState.figma?.fileKeys || []) as Array<{ key: string; name: string }>;
     await fetch('/api/integrations/save', {
@@ -300,94 +311,119 @@ export function IntegrationsPage() {
               </div>
             )}
           </div>
+
+          {/* 피그마 */}
+          <div className="bg-card border border-border-color rounded-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-background border border-border-color flex items-center justify-center text-lg">🎨</div>
+                <div>
+                  <h3 className="text-base font-bold leading-tight">Figma</h3>
+                  <p className="text-xs text-text-secondary">디자인 시안 편집 이력</p>
+                </div>
+              </div>
+              {isFigmaConnected
+                ? <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">연결됨</span>
+                : <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-500/10 text-text-secondary border border-border-color">미연결</span>}
+            </div>
+
+            {isFigmaConnected ? (
+              <div>
+                <div className="bg-background rounded-lg p-4 mb-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-text-secondary">토큰</span>
+                    <span className="text-xs font-mono text-text-secondary">{intState.figma.token}</span>
+                  </div>
+                  {intState.figma.handle && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-text-secondary">계정</span>
+                      <span className="text-xs text-text-secondary">{intState.figma.handle}</span>
+                    </div>
+                  )}
+                  {figDday && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-text-secondary">토큰 만료</span>
+                      <span className={`text-xs font-medium ${
+                        figDday.days < 0 ? 'text-red-500'
+                        : figDday.days <= 7 ? 'text-red-500'
+                        : figDday.days <= 30 ? 'text-amber-600' : 'text-text-secondary'}`}>
+                        {figDday.days < 0 ? `만료됨 · ${figDday.raw}` : `D-${figDday.days} · ${figDday.raw}`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <button className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors"
+                  disabled={saving === 'figma-del'} onClick={deleteFigma}>
+                  {saving === 'figma-del' ? '해제 중...' : '연동 해제'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input type="password" value={figToken} onChange={(e) => setFigToken(e.target.value)}
+                    placeholder="figd_ 로 시작하는 개인 액세스 토큰"
+                    className="flex-1 px-3 py-2 bg-background border border-border-color rounded-lg text-sm" />
+                  <select value={figDays} onChange={(e) => setFigDays(e.target.value)} title="발급할 때 고른 기간"
+                    className="px-2 py-2 bg-background border border-border-color rounded-lg text-sm">
+                    <option value="7">7일</option>
+                    <option value="30">30일</option>
+                    <option value="60">60일</option>
+                    <option value="90">90일</option>
+                  </select>
+                  <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg"
+                    disabled={saving === 'figma'} onClick={saveFigmaToken}>
+                    {saving === 'figma' ? '저장 중...' : '저장'}
+                  </button>
+                </div>
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  Settings → Security → Personal access tokens<br />
+                  권한 <span className="font-mono">current_user:read</span>, <span className="font-mono">file_metadata:read</span>,
+                  {' '}<span className="font-mono">file_versions:read</span> · 최대 90일
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* ═══ 피그마 ═══ */}
-      <div className="bg-card border border-border-color rounded-xl p-5 mb-6 mt-2">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">🎨</span>
-            <h3 className="text-base font-bold">피그마</h3>
-          </div>
-          <div className="flex items-center gap-2">
-            {isFigmaConnected && figDday && (
-              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${
-                figDday.days < 0 ? 'bg-red-500/10 text-red-500 border-red-500/25'
-                : figDday.days <= 7 ? 'bg-red-500/10 text-red-500 border-red-500/25'
-                : figDday.days <= 30 ? 'bg-amber-500/10 text-amber-600 border-amber-500/25'
-                : 'bg-gray-500/10 text-text-secondary border-border-color'}`}>
-                {figDday.days < 0 ? `만료됨 (${figDday.raw})` : `토큰 D-${figDday.days} · ${figDday.raw}`}
-              </span>
-            )}
-            {isFigmaConnected
-              ? <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">연결됨</span>
-              : <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-500/10 text-text-secondary border border-border-color">미연결</span>}
-          </div>
-        </div>
 
-        {!isFigmaConnected ? (
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input type="password" value={figToken} onChange={(e) => setFigToken(e.target.value)}
-                placeholder="figd_ 로 시작하는 개인 액세스 토큰"
-                className="flex-1 px-3 py-2 bg-background border border-border-color rounded-lg text-sm" />
-              <select value={figDays} onChange={(e) => setFigDays(e.target.value)}
-                title="발급할 때 고른 기간"
-                className="px-3 py-2 bg-background border border-border-color rounded-lg text-sm">
-                <option value="7">7일</option>
-                <option value="30">30일</option>
-                <option value="60">60일</option>
-                <option value="90">90일</option>
-                <option value="">기간 없음</option>
-              </select>
-              <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg"
-                disabled={saving === 'figma'} onClick={saveFigmaToken}>
-                {saving === 'figma' ? '저장 중...' : '저장'}
-              </button>
+      {isFigmaConnected && (
+        <div className="bg-card border border-border-color rounded-xl p-5 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🖼️</span>
+              <h3 className="text-sm font-bold">피그마 작업 파일</h3>
             </div>
-            <p className="text-xs text-text-secondary leading-relaxed">
-              토큰을 저장하면 작업 파일을 등록하는 칸이 나타납니다.<br />
-              피그마 → Settings → Security → Personal access tokens → Generate new token<br />
-              권한은 <span className="font-mono">current_user:read</span>, <span className="font-mono">file_metadata:read</span>,
-              {' '}<span className="font-mono">file_versions:read</span> 세 가지면 됩니다. 만료는 최대 90일입니다.
-            </p>
+            <span className="text-xs text-text-secondary">{figFiles.length}개 등록됨</span>
           </div>
-        ) : (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
-              <div className="text-xs font-semibold text-text-secondary mb-1.5">작업 파일 등록</div>
               <textarea value={figUrls} onChange={(e) => setFigUrls(e.target.value)} rows={3}
-                placeholder={'피그마 파일 주소를 붙여넣으세요 (여러 줄 가능)\nhttps://www.figma.com/design/.../파일명'}
-                className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm font-mono" />
+                placeholder={'파일 주소를 붙여넣으세요 (여러 줄 가능)\nhttps://www.figma.com/design/.../파일명'}
+                className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-xs font-mono" />
               <div className="flex items-center gap-2 mt-2">
-                <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg"
+                <button className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg"
                   disabled={saving === 'figma-files'} onClick={addFigmaFiles}>
                   {saving === 'figma-files' ? '확인 중...' : '추가'}
                 </button>
-                {figMsg && <span className="text-xs text-text-secondary">{figMsg}</span>}
+                <span className="text-xs text-text-secondary">
+                  {figMsg || '주소 안의 node-id 는 신경 쓰지 않아도 됩니다'}
+                </span>
               </div>
-              <p className="text-xs text-text-secondary mt-1.5">
-                주소 안의 <span className="font-mono">node-id</span> 는 신경 쓰지 않아도 됩니다 — 같은 파일이면 하나로 묶입니다.
-              </p>
             </div>
-
-            {figFiles.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-text-secondary mb-1.5">등록된 파일 {figFiles.length}개</div>
-                <div className="space-y-1">
-                  {figFiles.map(f => (
-                    <div key={f.key} className="flex items-center justify-between bg-background rounded-lg px-3 py-2">
-                      <span className="text-sm">{f.name}</span>
-                      <button className="text-xs text-red-500 hover:underline" onClick={() => removeFigmaFile(f.key)}>삭제</button>
-                    </div>
-                  ))}
+            <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+              {figFiles.length === 0 ? (
+                <div className="text-xs text-text-secondary py-2">등록된 파일이 없습니다</div>
+              ) : figFiles.map(f => (
+                <div key={f.key} className="flex items-center justify-between bg-background rounded-lg px-3 py-1.5">
+                  <span className="text-xs truncate">{f.name}</span>
+                  <button className="text-xs text-red-500 hover:underline flex-shrink-0 ml-2" onClick={() => removeFigmaFile(f.key)}>삭제</button>
                 </div>
-              </div>
-            )}
+              ))}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <BusinessReportSection userNN={getUserNN()} />
     </div>
