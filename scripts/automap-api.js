@@ -4179,6 +4179,7 @@ const server = http.createServer(async (req, res) => {
       const safe = {};
       if (data.dooray) safe.dooray = { token: data.dooray.token ? '••••' + data.dooray.token.slice(-4) : '', memberId: data.dooray.memberId || '', memberName: data.dooray.memberName || '', updatedAt: data.dooray.updatedAt || '' };
       if (data.github) safe.github = { owner: data.github.owner || '', repo: data.github.repo || '', token: data.github.token ? '••••' + data.github.token.slice(-4) : '', updatedAt: data.github.updatedAt || '' };
+      if (data.figma) safe.figma = { token: data.figma.token ? '••••' + data.figma.token.slice(-4) : '', handle: data.figma.handle || '', expiresAt: data.figma.expiresAt || '', fileKeys: data.figma.fileKeys || [], updatedAt: data.figma.updatedAt || '' };
       jsonRes(res, 200, { ok: true, data: safe });
     } catch (err) {
       jsonRes(res, 500, { ok: false, error: err.message });

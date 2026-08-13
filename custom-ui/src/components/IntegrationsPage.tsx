@@ -5,6 +5,14 @@ function getUserNN(): string {
   return (new URLSearchParams(window.location.search).get('token') || '').replace(/\D/g, '') || '01';
 }
 
+/** 발급 기간(일)으로 만료일을 계산한다. 피그마는 날짜가 아니라 기간을 고르게 되어 있다. */
+function expiryFromDays(days: string): string {
+  if (!days) return '';
+  const d = new Date();
+  d.setDate(d.getDate() + Number(days));
+  return d.toISOString().slice(0, 10);
+}
+
 export function IntegrationsPage() {
   const [intState, setIntState] = useState<any>({ dooray: null, github: null, loading: true });
   const [doorayToken, setDoorayToken] = useState('');
@@ -16,7 +24,7 @@ export function IntegrationsPage() {
   const [figToken, setFigToken] = useState('');
   const [figUrls, setFigUrls] = useState('');
   const [figMsg, setFigMsg] = useState('');
-  const [figExpires, setFigExpires] = useState('');
+  const [figDays, setFigDays] = useState('90');   // 피그마 발급 화면의 기간 선택과 맞춘다
 
   const loadInt = useCallback(async () => {
     try {
@@ -88,9 +96,9 @@ export function IntegrationsPage() {
     try {
       await fetch('/api/integrations/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ figma: { token: figToken.trim(), expiresAt: figExpires || '' }, userNN: getUserNN() }),
+        body: JSON.stringify({ figma: { token: figToken.trim(), expiresAt: expiryFromDays(figDays) }, userNN: getUserNN() }),
       });
-      setFigToken(''); setFigExpires(''); await loadInt();
+      setFigToken(''); await loadInt();
     } finally { setSaving(''); }
   };
 
@@ -296,8 +304,8 @@ export function IntegrationsPage() {
       )}
 
       {/* ═══ 피그마 ═══ */}
-      <div className="bg-card border border-border-color rounded-xl p-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
+      <div className="bg-card border border-border-color rounded-xl p-5 mb-6 mt-2">
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <span className="text-lg">🎨</span>
             <h3 className="text-base font-bold">피그마</h3>
@@ -324,15 +332,22 @@ export function IntegrationsPage() {
               <input type="password" value={figToken} onChange={(e) => setFigToken(e.target.value)}
                 placeholder="figd_ 로 시작하는 개인 액세스 토큰"
                 className="flex-1 px-3 py-2 bg-background border border-border-color rounded-lg text-sm" />
-              <input type="date" value={figExpires} onChange={(e) => setFigExpires(e.target.value)}
-                title="토큰 만료일 (발급 화면에 표시됩니다)"
-                className="px-3 py-2 bg-background border border-border-color rounded-lg text-sm" />
+              <select value={figDays} onChange={(e) => setFigDays(e.target.value)}
+                title="발급할 때 고른 기간"
+                className="px-3 py-2 bg-background border border-border-color rounded-lg text-sm">
+                <option value="7">7일</option>
+                <option value="30">30일</option>
+                <option value="60">60일</option>
+                <option value="90">90일</option>
+                <option value="">기간 없음</option>
+              </select>
               <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg"
                 disabled={saving === 'figma'} onClick={saveFigmaToken}>
                 {saving === 'figma' ? '저장 중...' : '저장'}
               </button>
             </div>
             <p className="text-xs text-text-secondary leading-relaxed">
+              토큰을 저장하면 작업 파일을 등록하는 칸이 나타납니다.<br />
               피그마 → Settings → Security → Personal access tokens → Generate new token<br />
               권한은 <span className="font-mono">current_user:read</span>, <span className="font-mono">file_metadata:read</span>,
               {' '}<span className="font-mono">file_versions:read</span> 세 가지면 됩니다. 만료는 최대 90일입니다.
