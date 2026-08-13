@@ -24,7 +24,8 @@ export function IntegrationsPage() {
   const [figToken, setFigToken] = useState('');
   const [figUrls, setFigUrls] = useState('');
   const [figMsg, setFigMsg] = useState('');
-  const [figDays, setFigDays] = useState('90');   // 피그마 발급 화면의 기간 선택과 맞춘다
+  const [figDays, setFigDays] = useState('90');
+  const [figOpen, setFigOpen] = useState(false);   // 피그마 발급 화면의 기간 선택과 맞춘다
 
   const loadInt = useCallback(async () => {
     try {
@@ -356,6 +357,43 @@ export function IntegrationsPage() {
                   disabled={saving === 'figma-del'} onClick={deleteFigma}>
                   {saving === 'figma-del' ? '해제 중...' : '연동 해제'}
                 </button>
+
+                {/* 작업 파일 — 접어두어 카드가 길어지지 않게 한다 */}
+                <div className="mt-3 pt-3 border-t border-border-color">
+                  <button onClick={() => setFigOpen(!figOpen)}
+                    className="w-full flex items-center justify-between text-sm hover:text-accent transition-colors">
+                    <span className="font-medium">작업 파일 {figFiles.length}개</span>
+                    <span className="text-xs text-text-secondary">{figOpen ? '접기 ▲' : '펼치기 ▼'}</span>
+                  </button>
+
+                  {figOpen && (
+                    <div className="mt-3 space-y-2">
+                      <textarea value={figUrls} onChange={(e) => setFigUrls(e.target.value)} rows={2}
+                        placeholder={'파일 주소를 붙여넣으세요 (여러 줄 가능)'}
+                        className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-xs font-mono" />
+                      <div className="flex items-center gap-2">
+                        <button className="px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg"
+                          disabled={saving === 'figma-files'} onClick={addFigmaFiles}>
+                          {saving === 'figma-files' ? '확인 중...' : '추가'}
+                        </button>
+                        <span className="text-xs text-text-secondary truncate">
+                          {figMsg || 'node-id 는 신경 쓰지 않아도 됩니다'}
+                        </span>
+                      </div>
+                      <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                        {figFiles.length === 0 ? (
+                          <div className="text-xs text-text-secondary py-1">등록된 파일이 없습니다</div>
+                        ) : figFiles.map(f => (
+                          <div key={f.key} className="flex items-center justify-between bg-background rounded-lg px-3 py-1.5">
+                            <span className="text-xs truncate">{f.name}</span>
+                            <button className="text-xs text-red-500 hover:underline flex-shrink-0 ml-2"
+                              onClick={() => removeFigmaFile(f.key)}>삭제</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
@@ -386,44 +424,6 @@ export function IntegrationsPage() {
         </div>
       )}
 
-
-      {isFigmaConnected && (
-        <div className="bg-card border border-border-color rounded-xl p-5 mb-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🖼️</span>
-              <h3 className="text-sm font-bold">피그마 작업 파일</h3>
-            </div>
-            <span className="text-xs text-text-secondary">{figFiles.length}개 등록됨</span>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div>
-              <textarea value={figUrls} onChange={(e) => setFigUrls(e.target.value)} rows={3}
-                placeholder={'파일 주소를 붙여넣으세요 (여러 줄 가능)\nhttps://www.figma.com/design/.../파일명'}
-                className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-xs font-mono" />
-              <div className="flex items-center gap-2 mt-2">
-                <button className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg"
-                  disabled={saving === 'figma-files'} onClick={addFigmaFiles}>
-                  {saving === 'figma-files' ? '확인 중...' : '추가'}
-                </button>
-                <span className="text-xs text-text-secondary">
-                  {figMsg || '주소 안의 node-id 는 신경 쓰지 않아도 됩니다'}
-                </span>
-              </div>
-            </div>
-            <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-              {figFiles.length === 0 ? (
-                <div className="text-xs text-text-secondary py-2">등록된 파일이 없습니다</div>
-              ) : figFiles.map(f => (
-                <div key={f.key} className="flex items-center justify-between bg-background rounded-lg px-3 py-1.5">
-                  <span className="text-xs truncate">{f.name}</span>
-                  <button className="text-xs text-red-500 hover:underline flex-shrink-0 ml-2" onClick={() => removeFigmaFile(f.key)}>삭제</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
       <BusinessReportSection userNN={getUserNN()} />
     </div>
