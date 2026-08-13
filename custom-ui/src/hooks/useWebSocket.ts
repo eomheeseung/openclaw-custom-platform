@@ -900,7 +900,9 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
        두레이는 데몬이 같은 지시를 붙여 카드가 잘 나오는데, 웹은 그게 없어
        모델이 마지막 단계(카드 출력)를 자주 건너뛰었다(실측). 화면에서는 숨긴다. */
     const routedId = autoAgent?.id || mentionTargetId;
-    if (routedId === 'work-report' || routedId === 'business-report') {
+    /* ⚠ 업무보고에만 붙인다. 사업 주간보고에는 finish.py 가 없어서
+       없는 파일을 찾느라 오히려 헤맨다(스크립트: weekly_report/sr_fetch/hwpx_gen). */
+    if (routedId === 'work-report') {
       finalMessage = `${finalMessage}\n\n${FINISH_HINT}`;
     }
 
