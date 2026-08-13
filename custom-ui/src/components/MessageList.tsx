@@ -177,6 +177,9 @@ const BizPickerCard = memo(function BizPickerCard({
    못 찾으면 null → 검증 생략 (컨텍스트 압축으로 잘렸거나 sr-table 없는 흐름) */
 /* 서브에이전트가 내는 카드 묶음: [{"kind":"sr-table","data":{…}}, …] (단일 객체도 허용).
    kind 가 우리가 아는 카드가 아니면 null 을 돌려 평범한 코드블록으로 남긴다. */
+const CARD_FENCE_STARTS = ['```work-draft', '```biz-picker', '```sr-table', '```week-picker',
+  '```grouping-editor', '```draft-card', '```download-card', '```tool-pick', '```json'];
+
 const KIND_CARDS = new Set([
   'biz-picker', 'sr-table', 'week-picker', 'grouping-editor',
   'draft-card', 'download-card', 'work-draft', 'tool-pick',
@@ -433,7 +436,15 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
             );
           }
 
-          const cleanContent = cleanDisplayContent(message.content || '') || (message.isLoading ? '생각 중...' : '');
+          let cleanContent = cleanDisplayContent(message.content || '') || (message.isLoading ? '생각 중...' : '');
+          /* 스트리밍 중에는 카드 JSON 이 반쯤 온 상태라 파싱되지 않아 글자로 쏟아진다.
+             펜스가 나타난 시점부터는 잘라내고 안내만 둔다 — 완료되면 카드로 그려진다. */
+          if (message.isLoading) {
+            const cut = CARD_FENCE_STARTS.map(f => cleanContent.indexOf(f)).filter(i => i >= 0);
+            if (cut.length) {
+              cleanContent = (cleanContent.slice(0, Math.min(...cut)).trim() + '\n\n_초안 카드를 만드는 중…_').trim();
+            }
+          }
 
           const mentionAgent = message.mentionAgentId ? agents.find(a => a.id === message.mentionAgentId) : undefined;
           const isMention = !!message.mentionAgentId;
