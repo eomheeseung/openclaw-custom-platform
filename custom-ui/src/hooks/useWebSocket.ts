@@ -25,6 +25,8 @@ interface UseWebSocketReturn {
   deleteSession: (sessionKey: string) => Promise<void>;
   stopChat: () => void;
   isLoading: boolean;
+  /** 진행 단계 문구 (없으면 빈 문자열) */
+  progress: string;
   apiCallCount: number;
   sendRequest: (method: string, params?: Record<string, unknown>) => Promise<ProtocolFrame>;
   fetchAgents: () => Promise<void>;
@@ -133,6 +135,8 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   const [currentSession, setCurrentSession] = useState<string | null>(null);
   const [apiCallCount, setApiCallCount] = useState(0);
   const [isSending, setIsSending] = useState(false);
+  /* 지금 무슨 단계인지 — 초 숫자만 늘어나면 멈춘 건지 도는 건지 알 수 없다(실측 200초) */
+  const [progress, setProgress] = useState('');
 
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageIdCounter = useRef(0);
@@ -534,6 +538,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     } else if (state === 'error') {
       currentRunId.current = null;
       setIsSending(false);
+      setProgress('');
       const errorMessage = (payload.errorMessage as string) || '';
       const friendly = humanizeAgentError(errorMessage);
       setMessages(prev => {
@@ -548,6 +553,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     } else if (state === 'aborted') {
       currentRunId.current = null;
       setIsSending(false);
+      setProgress('');
       setMessages(prev => {
         const idx = prev.findIndex(m => m.id === `run-${runId}`);
         if (idx >= 0) {
@@ -572,6 +578,16 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     // 내부 도구는 카드에서 제외 (위임 뱃지로 대체 표시)
     const HIDDEN_TOOLS = new Set(['sessions_spawn', 'sessions_yield', 'sessions_continue', 'sessions_complete', 'sessions_resume']);
 
+
+    if (phase === 'start') {
+      const cmd = JSON.stringify(data.args || data.input || {});
+      const stage = /build_draft/.test(cmd) ? '자료를 모으는 중입니다'
+        : /polish/.test(cmd) ? '항목을 다듬는 중입니다'
+        : /finish/.test(cmd) ? '초안을 정리하는 중입니다'
+        : /send_report/.test(cmd) ? '메일을 준비하는 중입니다'
+        : '';
+      if (stage) setProgress(stage);
+    }
 
     // 일반 도구 호출 표시 (내부 도구 제외)
     if (toolName && !HIDDEN_TOOLS.has(toolName) && phase === 'start') {
@@ -1108,6 +1124,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     deleteSession,
     stopChat,
     isLoading,
+    progress,
     apiCallCount,
     sendRequest,
     fetchAgents,

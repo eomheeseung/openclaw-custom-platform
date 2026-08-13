@@ -171,7 +171,7 @@ function App() {
   const {
     connectionStatus, messages, sendMessage, injectAssistantMessage, agents, sessions,
     currentSession, createSession, switchSession, clearSession, loadSessionHistory,
-    deleteSession, stopChat, isLoading, apiCallCount, sendRequest, fetchAgents,
+    deleteSession, stopChat, isLoading, progress, apiCallCount, sendRequest, fetchAgents,
   } = useWebSocket({ url: token ? getGatewayUrl(token) : '', token });
 
   /* ───── Jarvis additions: QuickActions prefill + push toasts ───── */
@@ -746,7 +746,7 @@ function App() {
           ) : currentView === 'chat' ? (
             <>
               {currentSession ? (
-                <MessageList messages={messages} agents={agents} responderName={currentAgentData?.name} responderEmoji={currentAgentData?.emoji} onSendMessage={sendMessage} onPrefill={injectPrefill} onIntentPick={handleBizPickerIntent} />
+                <MessageList messages={messages} agents={agents} responderName={currentAgentData?.name} responderEmoji={currentAgentData?.emoji} progress={progress} onSendMessage={sendMessage} onPrefill={injectPrefill} onIntentPick={handleBizPickerIntent} />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 text-text-secondary overflow-y-auto">
                   <div className="text-5xl mb-4">{currentAgentData?.emoji || '💬'}</div>

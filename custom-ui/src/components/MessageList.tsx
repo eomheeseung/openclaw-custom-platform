@@ -60,6 +60,8 @@ interface MessageListProps {
      떠서 누가 일하는지 알 수 없었다(실측). */
   responderName?: string;
   responderEmoji?: string;
+  /** 진행 단계 — 초 숫자만 보이면 멈춘 건지 알 수 없다 */
+  progress?: string;
   onSendMessage?: (text: string) => void;
   onPrefill?: (text: string) => void;
   /* 프론트 처리 인텐트 (biz-picker intent 매칭). 값 있으면 onSendMessage 스킵. */
@@ -256,7 +258,7 @@ function findGroupingConfirmBefore(msgs: Message[], idx: number): ConfirmedGroup
   return null;
 }
 
-export function MessageList({ messages, agents = [], responderName, responderEmoji, onSendMessage, onPrefill, onIntentPick }: MessageListProps) {
+export function MessageList({ messages, agents = [], responderName, responderEmoji, progress, onSendMessage, onPrefill, onIntentPick }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -606,7 +608,7 @@ export function MessageList({ messages, agents = [], responderName, responderEmo
                         <span className="w-1.5 h-1.5 rounded-full bg-accent/40 animate-bounce" style={{ animationDelay: '150ms' }} />
                         <span className="w-1.5 h-1.5 rounded-full bg-accent/40 animate-bounce" style={{ animationDelay: '300ms' }} />
                       </div>
-                      <span className="text-xs">응답을 작성하고 있습니다</span>
+                      <span className="text-xs">{progress || '응답을 작성하고 있습니다'}</span>
                     </div>
                   )}
 
@@ -627,7 +629,7 @@ export function MessageList({ messages, agents = [], responderName, responderEmo
             /* 사용자 마지막 발화 이후 응답 미도착 → "비서 생각 중" 인라인 카드 */
             showAssistantThinking && (
               <ThinkingCard key="thinking-card" startTime={lastMsg!.timestamp}
-                name={responderName} emoji={responderEmoji} />
+                name={responderName} emoji={responderEmoji} progress={progress} />
             ),
           ];
         })()
@@ -643,8 +645,9 @@ function subjectParticle(word: string): string {
   return (ch - 0xac00) % 28 === 0 ? '가' : '이';
 }
 
-function ThinkingCard({ startTime, name, emoji }: { startTime: Date; name?: string; emoji?: string }) {
+function ThinkingCard({ startTime, name, emoji, progress }: { startTime: Date; name?: string; emoji?: string; progress?: string }) {
   const who = (name || '').trim();
+  const doing = (progress || '').trim() || '작성하고 있습니다';
   return (
     <div className="flex gap-3">
       <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center bg-card border border-border-color shadow-sm">
@@ -659,7 +662,7 @@ function ThinkingCard({ startTime, name, emoji }: { startTime: Date; name?: stri
               <span className="w-1.5 h-1.5 rounded-full bg-accent/50 animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
             <span className="text-xs font-medium">
-              {emoji ? `${emoji} ` : ''}{who ? `${who}${subjectParticle(who)} 작성하고 있습니다` : '작성하고 있습니다'}
+              {emoji ? `${emoji} ` : ''}{who ? `${who}${subjectParticle(who)} ${doing}` : doing}
             </span>
             <span className="text-[10px] font-mono text-text-secondary/60">
               <ElapsedTimer startTime={startTime} />
