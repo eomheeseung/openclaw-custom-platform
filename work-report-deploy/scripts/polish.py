@@ -31,6 +31,23 @@ def _lists(draft):
     yield (draft.setdefault("common", []), None)
 
 
+def _fix_replacement(new, origin):
+    """깨진 문자(U+FFFD)를 원문 글자로 되돌린다.
+
+    모델이 명령 인자로 한글을 넘기는 과정에서 글자가 통째로 깨져 들어온다
+    (실측: 검색시스템 → 검색시스\ufffd\ufffd). 초성 비교로는 못 잡는다 —
+    깨진 문자에는 초성이 없고 글자 수도 달라진다. 원문과 맞춰 그 자리만 되돌린다."""
+    if "\ufffd" not in (new or "") or not origin:
+        return new
+    import difflib
+    out, sm = [], difflib.SequenceMatcher(None, new, origin, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        seg = new[i1:i2]
+        out.append(origin[j1:j2] if tag in ("replace", "delete") and "\ufffd" in seg else seg)
+    fixed = "".join(out)
+    return fixed if "\ufffd" not in fixed else new
+
+
 def _restore_from(new, origin):
     """원문에 있던 단어가 초성만 같고 글자가 다르게 바뀌었으면 원문 글자로 되돌린다.
     사전(TERMS)에 없는 고유명사·사업명이 깨지는 경우를 잡는다."""
@@ -72,8 +89,10 @@ def apply(draft, edits):
             # 여기서 안 잡으면 모델이 파일을 다시 읽고 스스로 고치려 들면서 같은 요청이
             # 대여섯 번 반복된다(실측: 한 회차 170초).
             new = str(val["text"]).strip()[:300]
-            fixed = verify_draft.fix_typos(new)
-            fixed = _restore_from(fixed, it.get("raw_text") or it.get("text") or "")
+            origin = it.get("raw_text") or it.get("text") or ""
+            fixed = _fix_replacement(new, origin)
+            fixed = verify_draft.fix_typos(fixed)
+            fixed = _restore_from(fixed, origin)
             it["text"] = fixed
         if val.get("status") in STATUS:
             it["status"] = val["status"]

@@ -60,6 +60,28 @@ def _is_minor(text):
     return any(re.search(p, text or "") for p in MINOR_PATTERNS)
 
 
+# "1. 사업자등록증", "9. 신용평가등급확인서(...)" 처럼 번호가 붙은 제출 서류 묶음.
+# 한 건씩 세면 보고서가 서류 목록이 된다(실측 13줄). 한 줄로 묶는다.
+RE_DOC_SET = re.compile(r"^\s*\d{1,2}[.)]\s+\S")
+
+
+def compress_doc_set(items, threshold=3):
+    docs = [x for x in items if RE_DOC_SET.match(x.get("text") or "")]
+    if len(docs) < threshold:
+        return items
+    rest = [x for x in items if x not in docs]
+    srcs = []
+    for d in docs:
+        srcs += d.get("sources") or [{"source": d.get("source"), "url": d.get("url")}]
+    rest.append({
+        "text": f"제출 서류 준비 {len(docs)}건",
+        "source": docs[0].get("source"), "url": None,
+        "biz_id": docs[0].get("biz_id"), "at": docs[0].get("at"),
+        "status": "done", "sources": srcs, "merged_count": len(docs),
+    })
+    return rest
+
+
 def compress_minor(items, threshold=3):
     minor = [x for x in items if _is_minor(x.get("text"))]
     if len(minor) < threshold:
