@@ -106,13 +106,14 @@ export function IntegrationsPage() {
   /* URL 을 붙여넣으면 서버가 파일 키를 뽑고 이름을 조회한다.
      피그마는 사용자 기준 파일 목록 API 가 없어(명세 확인) 개별 등록 외에는 방법이 없다. */
   const addFigmaFiles = async () => {
-    if (!figUrls.trim()) return;
+    if (!figUrls.trim()) { setFigMsg('주소를 입력해주세요'); return; }
     setSaving('figma-files'); setFigMsg('');
     try {
       const r = await fetch('/api/figma/resolve', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ urls: figUrls, userNN: getUserNN() }),
       });
+      if (!r.ok) { setFigMsg(`서버 오류 (${r.status})`); return; }
       const d = await r.json();
       if (!d.ok) { setFigMsg(d.error || '실패'); return; }
       const found = (d.files || []).filter((f: any) => f.ok);
@@ -124,8 +125,10 @@ export function IntegrationsPage() {
         body: JSON.stringify({ figma: { fileKeys: merged }, userNN: getUserNN() }),
       });
       setFigUrls('');
-      setFigMsg(found.length ? `${found.length}개 등록했어요` : '파일을 찾지 못했어요');
+      setFigMsg(found.length ? `${found.length}개 등록했어요` : '주소에서 파일을 찾지 못했어요');
       await loadInt();
+    } catch (e) {
+      setFigMsg('요청 실패 — ' + String(e).slice(0, 60));
     } finally { setSaving(''); }
   };
 
@@ -368,17 +371,18 @@ export function IntegrationsPage() {
 
                   {figOpen && (
                     <div className="mt-3 space-y-2">
-                      <textarea value={figUrls} onChange={(e) => setFigUrls(e.target.value)} rows={2}
-                        placeholder={'파일 주소를 붙여넣으세요 (여러 줄 가능)'}
-                        className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-xs font-mono" />
-                      <div className="flex items-center gap-2">
-                        <button className="px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg"
+                      <div className="flex gap-2">
+                        <input type="text" value={figUrls} onChange={(e) => setFigUrls(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addFigmaFiles(); } }}
+                          placeholder="파일 주소를 붙여넣고 Enter"
+                          className="flex-1 px-3 py-2 bg-background border border-border-color rounded-lg text-xs font-mono" />
+                        <button className="px-3 py-2 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg flex-shrink-0"
                           disabled={saving === 'figma-files'} onClick={addFigmaFiles}>
                           {saving === 'figma-files' ? '확인 중...' : '추가'}
                         </button>
-                        <span className="text-xs text-text-secondary truncate">
-                          {figMsg || 'node-id 는 신경 쓰지 않아도 됩니다'}
-                        </span>
+                      </div>
+                      <div className="text-xs text-text-secondary truncate">
+                        {figMsg || 'node-id 는 신경 쓰지 않아도 됩니다'}
                       </div>
                       <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
                         {figFiles.length === 0 ? (
