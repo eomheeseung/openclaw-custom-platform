@@ -303,17 +303,19 @@ async function pollUser(u, state) {
     });
     if (replied) {
       state.pending = null;
-      if (state.pendingLabel) {
-        // 응답이 끝난 지금이 이름표를 붙일 때다
-        const ok = await labelSession(u.nn, state.pendingLabel.key, state.pendingLabel.label);
-        log(`user${u.nn} 이름표 ${ok ? "적용" : "실패"}: ${state.pendingLabel.label}`);
-        if (ok) {
-          const map = state.labeledKeys || {};
-          map[state.pendingLabel.key] = true;
-          state.labeledKeys = map;
-        }
-        state.pendingLabel = null;
+      // 응답이 끝난 지금이 이름표를 붙일 때다 — 밀린 것까지 전부
+      const queue = state.pendingLabels || [];
+      const map = state.labeledKeys || {};
+      const left = [];
+      for (const item of queue) {
+        if (map[item.key]) continue;
+        const ok = await labelSession(u.nn, item.key, item.label);
+        log(`user${u.nn} 이름표 ${ok ? "적용" : "실패"}: ${item.label}`);
+        if (ok) map[item.key] = true;
+        else left.push(item);              // 실패하면 다음 기회에 다시
       }
+      state.labeledKeys = map;
+      state.pendingLabels = left;
     } else if (Date.now() - state.pending.at > REPLY_TIMEOUT_MS) {
       await sayToDooray(u.nn, "응답이 지연되고 있습니다. 다시 «..» 로 요청하시거나 "
         + `웹에서 확인해주세요 → ${webLink(u.nn, state.pending.key)}`);
@@ -343,7 +345,12 @@ async function pollUser(u, state) {
     }
     const labeled = state.labeledKeys || {};
     if (labeled[key0]) label0 = null;                 // 이름표는 세션마다 한 번
-    if (label0) state.pendingLabel = { key: key0, label: label0 };   // 응답이 끝난 뒤에 붙인다
+    if (label0) {
+      // 큐로 둔다 — 슬롯이 하나면 연속 요청 때 앞의 이름표가 밀려난다(실측)
+      const q = state.pendingLabels || [];
+      if (!q.some((x) => x.key === key0)) q.push({ key: key0, label: label0 });
+      state.pendingLabels = q;
+    }
     // 회신 지시를 메시지에 함께 싣는다 — BOOTSTRAP 은 세션 첫 턴에만 읽히므로
     // 이미 진행 중인 세션에는 새 규칙이 반영되지 않는다(실측: 회신 누락).
     const body = [
