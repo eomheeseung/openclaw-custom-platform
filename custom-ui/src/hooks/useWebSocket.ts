@@ -513,7 +513,10 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
          그 내용을 실어 보낸다(확인: allowToolOutput = verbose === "full").
          그래서 실시간에는 카드가 도착하지 않고 새로고침해야 보였다(실측 2회).
          전체 도구 출력을 켜면 모든 명령 결과가 화면에 쏟아지므로, 초안만 직접 받아 그린다. */
-      if (evtSessionKey && /^agent:work-report:/.test(evtSessionKey) && !lastWasConfirm.current) {
+      // 메인 실행은 payload 에 sessionKey 가 없다(서브에이전트일 때만 실린다) —
+      // 화면이 보고 있는 세션으로 판단해야 카드가 뜬다(실측: 조건이 안 맞아 계속 안 떴다)
+      const wrKey = evtSessionKey || currentSession || '';
+      if (/^agent:work-report:/.test(wrKey) && !lastWasConfirm.current) {
         fetch(`/api/work-report/draft${draftQuery()}`, { credentials: 'include' })
           .then(r => r.json())
           .then(j => {
