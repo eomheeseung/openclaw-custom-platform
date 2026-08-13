@@ -267,9 +267,10 @@ function recordActivity(email) {
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
+    const bodyChunks = [];
+    req.on('data', chunk => { bodyChunks.push(chunk); });
     req.on('end', () => {
+        const body = Buffer.concat(bodyChunks).toString('utf8');
       try {
         const parsed = JSON.parse(body);
         // Auto-resolve userNN from container IP
@@ -309,9 +310,9 @@ function getAuthSession(req) {
 function httpGet(url) {
   return new Promise((resolve, reject) => {
     https.get(url, res => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => resolve(data));
+      const dataChunks = [];
+      res.on('data', chunk => { dataChunks.push(chunk); });
+      res.on('end', () => resolve(Buffer.concat(dataChunks).toString('utf8')));
     }).on('error', reject);
   });
 }
@@ -329,9 +330,9 @@ function httpPost(url, params) {
         'Content-Length': Buffer.byteLength(postData),
       },
     }, res => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => resolve(data));
+      const dataChunks = [];
+      res.on('data', chunk => { dataChunks.push(chunk); });
+      res.on('end', () => resolve(Buffer.concat(dataChunks).toString('utf8')));
     });
     req.on('error', reject);
     req.write(postData);
@@ -392,9 +393,9 @@ async function getValidAccessToken(userNN) {
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => resolve(body));
+    const bodyChunks = [];
+    req.on('data', chunk => { bodyChunks.push(chunk); });
+    req.on('end', () => resolve(Buffer.concat(bodyChunks).toString('utf8')));
     req.on('error', reject);
   });
 }
@@ -416,9 +417,10 @@ function doorayApiRequest(method, apiUrl, doorayToken, body) {
       options.headers['Content-Length'] = Buffer.byteLength(bodyStr);
     }
     const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
+      const dataChunks = [];
+      res.on('data', chunk => { dataChunks.push(chunk); });
       res.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8');
         try { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
         catch { resolve({ status: res.statusCode, data }); }
       });
@@ -433,9 +435,10 @@ function figmaApi(path, token) {
   return new Promise((resolve) => {
     const r = https.request({ hostname: 'api.figma.com', path, method: 'GET',
                               headers: { 'X-Figma-Token': token } }, (res2) => {
-      let data = '';
-      res2.on('data', c => { data += c; });
-      res2.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
+      const dataChunks = [];
+      res2.on('data', chunk => { dataChunks.push(chunk); });
+      res2.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8'); try { resolve(JSON.parse(data)); } catch { resolve(null); } });
     });
     r.on('error', () => resolve(null));
     r.end();
@@ -459,9 +462,10 @@ function gmailApiRequest(method, url, accessToken, body) {
       options.headers['Content-Length'] = Buffer.byteLength(bodyStr);
     }
     const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
+      const dataChunks = [];
+      res.on('data', chunk => { dataChunks.push(chunk); });
       res.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8');
         try { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
         catch { resolve({ status: res.statusCode, data }); }
       });
@@ -1138,9 +1142,10 @@ const server = http.createServer(async (req, res) => {
           headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
           timeout: 8000,
         }, (resp) => {
-          let body = '';
-          resp.on('data', c => body += c);
+          const bodyChunks = [];
+          resp.on('data', chunk => { bodyChunks.push(chunk); });
           resp.on('end', () => {
+        const body = Buffer.concat(bodyChunks).toString('utf8');
             let status = 'unknown';
             let reason = null;
             if (resp.statusCode === 200) status = 'live';
@@ -1178,9 +1183,10 @@ const server = http.createServer(async (req, res) => {
           },
           timeout: 10000,
         }, (resp) => {
-          let body = '';
-          resp.on('data', c => body += c);
+          const bodyChunks = [];
+          resp.on('data', chunk => { bodyChunks.push(chunk); });
           resp.on('end', () => {
+        const body = Buffer.concat(bodyChunks).toString('utf8');
             const h = resp.headers;
             let status = 'unknown';
             let reason = null;
@@ -2640,8 +2646,8 @@ const server = http.createServer(async (req, res) => {
           totalApiCalls++;
           const apiRes = await new Promise((resolve, reject) => {
             https.get(reqUrl, r => {
-              let data = '';
-              r.on('data', c => { data += c; });
+              const dataChunks = [];
+              r.on('data', chunk => { dataChunks.push(chunk); });
               r.on('end', () => resolve({ status: r.statusCode, body: data }));
             }).on('error', reject);
           });
@@ -2763,9 +2769,9 @@ const server = http.createServer(async (req, res) => {
             https.get(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, {
               headers: { 'Authorization': `Bearer ${accessToken}` },
             }, (dlRes) => {
-              let data = '';
-              dlRes.on('data', chunk => { data += chunk; });
-              dlRes.on('end', () => resolve(data));
+              const dataChunks = [];
+              dlRes.on('data', chunk => { dataChunks.push(chunk); });
+              dlRes.on('end', () => resolve(Buffer.concat(dataChunks).toString('utf8')));
             }).on('error', reject);
           });
           content = dl;
@@ -3127,7 +3133,7 @@ const server = http.createServer(async (req, res) => {
               timeout: 90_000,
             }, (resp) => {
               let buf = '';
-              resp.on('data', c => buf += c);
+              resp.on('data', chunk => { bufChunks.push(chunk); });
               resp.on('end', () => resolve({ status: resp.statusCode, body: buf }));
             });
             req2.on('error', err => resolve({ status: 599, body: err.message }));
@@ -3705,7 +3711,7 @@ const server = http.createServer(async (req, res) => {
           };
           const req2 = https.request(options, (resp) => {
             let buf = '';
-            resp.on('data', c => buf += c);
+            resp.on('data', chunk => { bufChunks.push(chunk); });
             resp.on('end', () => resolve({ status: resp.statusCode, body: buf }));
           });
           req2.on('error', err => resolve({ status: 599, body: err.message }));
@@ -3941,9 +3947,10 @@ const server = http.createServer(async (req, res) => {
                 'Content-Length': multipartBody.length,
               },
             }, (uploadRes) => {
-              let data = '';
-              uploadRes.on('data', chunk => { data += chunk; });
-              uploadRes.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+              const dataChunks = [];
+              uploadRes.on('data', chunk => { dataChunks.push(chunk); });
+              uploadRes.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8'); try { resolve(JSON.parse(data)); } catch { resolve({}); } });
             });
             uploadReq.on('error', reject);
             uploadReq.write(multipartBody);
@@ -3985,9 +3992,10 @@ const server = http.createServer(async (req, res) => {
                 'Content-Length': multipartBody.length,
               },
             }, (uploadRes) => {
-              let data = '';
-              uploadRes.on('data', chunk => { data += chunk; });
-              uploadRes.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+              const dataChunks = [];
+              uploadRes.on('data', chunk => { dataChunks.push(chunk); });
+              uploadRes.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8'); try { resolve(JSON.parse(data)); } catch { resolve({}); } });
             });
             uploadReq.on('error', reject);
             uploadReq.write(multipartBody);
@@ -4027,9 +4035,10 @@ const server = http.createServer(async (req, res) => {
                 'Content-Length': multipartBody.length,
               },
             }, (uploadRes) => {
-              let data = '';
-              uploadRes.on('data', chunk => { data += chunk; });
-              uploadRes.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+              const dataChunks = [];
+              uploadRes.on('data', chunk => { dataChunks.push(chunk); });
+              uploadRes.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8'); try { resolve(JSON.parse(data)); } catch { resolve({}); } });
             });
             uploadReq.on('error', reject);
             uploadReq.write(multipartBody);
@@ -4109,9 +4118,10 @@ const server = http.createServer(async (req, res) => {
             'Content-Length': multipartBody.length,
           },
         }, (uploadRes) => {
-          let data = '';
-          uploadRes.on('data', chunk => { data += chunk; });
-          uploadRes.on('end', () => { try { resolve({ status: uploadRes.statusCode, data: JSON.parse(data) }); } catch { resolve({ status: uploadRes.statusCode, data }); } });
+          const dataChunks = [];
+          uploadRes.on('data', chunk => { dataChunks.push(chunk); });
+          uploadRes.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8'); try { resolve({ status: uploadRes.statusCode, data: JSON.parse(data) }); } catch { resolve({ status: uploadRes.statusCode, data }); } });
         });
         uploadReq.on('error', reject);
         uploadReq.write(multipartBody);
@@ -4319,9 +4329,10 @@ const server = http.createServer(async (req, res) => {
             'Content-Length': multipartBody.length,
           },
         }, (uploadRes) => {
-          let data = '';
-          uploadRes.on('data', chunk => { data += chunk; });
+          const dataChunks = [];
+          uploadRes.on('data', chunk => { dataChunks.push(chunk); });
           uploadRes.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8');
             try { resolve({ status: uploadRes.statusCode, data: JSON.parse(data) }); }
             catch { resolve({ status: uploadRes.statusCode, data }); }
           });
