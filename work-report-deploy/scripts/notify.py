@@ -94,8 +94,7 @@ def draft_summary(nn, week_label_fn=None):
     for grp in list(d.get("businesses") or []) + [{"items": d.get("common") or []}]:
         for it in grp.get("items") or []:
             (done if it.get("status") == "done" else rest).append(it.get("text", ""))
-    link = (f"http://claw.tideflo.work/chat/secretary/"
-            f"dooray-{week}?token=".lower() + _gateway_token(nn))
+    link = _web_link(nn, week)
     lines = [f"이번 주 주간보고 초안 ({d.get('period','')})",
              f"완료 {len(done)}건" + (f" · 진행/차주 {len(rest)}건" if rest else "")]
     for t in done[:5]:
@@ -108,6 +107,23 @@ def draft_summary(nn, week_label_fn=None):
         lines.append(f"※ 수집 실패: {', '.join(d['failures'])}")
     lines.append(f"확인: {link}")
     return "\n".join(lines)
+
+
+def _web_link(nn, week):
+    """대화 링크. 담당별로 세션이 갈리므로 **데몬이 기록한 실제 세션 키**에서 만든다.
+    고정 문자열(secretary/dooray-<주차>)로 만들면 엉뚱한 대화가 열린다(실측)."""
+    token = _gateway_token(nn)
+    key = ""
+    try:
+        st = json.load(open(f"{paths.data_dir(nn)}/work-report/dooray-state.json"))
+        key = st.get("sessionKey") or ""
+    except Exception:
+        pass
+    parts = key.split(":")
+    if len(parts) >= 3:
+        tail = ":".join(parts[2:]).lower()
+        return f"http://claw.tideflo.work/chat/{parts[1]}/{tail}?token={token}"
+    return f"http://claw.tideflo.work/chat/work-report/dooray-{week}?token={token}".lower()
 
 
 def _gateway_token(nn):

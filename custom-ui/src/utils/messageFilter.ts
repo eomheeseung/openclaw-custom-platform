@@ -101,6 +101,28 @@ export const FINISH_HINT = '↳ 마무리 단계를 반드시 실행해라 (거�
 
 const KIND_CARD_RE = /^\s*(?:```json\s*)?\[?\s*\{\s*"kind"\s*:/;
 
+/** 펜스 뒤에 **파싱되는 JSON** 이 실제로 있어야 카드로 인정한다.
+    문자열만 보고 통과시키면 스크립트 소스(print("```work-draft…") 같은 코드)까지
+    화면에 그대로 쏟아진다(실측: finish.py 소스가 대화에 노출). */
+export function looksLikeRenderableCard(content: string): boolean {
+  for (const fence of CARD_FENCES) {
+    let i = content.indexOf(fence);
+    while (i >= 0) {
+      const rest = content.slice(i + fence.length);
+      const start = rest.search(/[[{]/);
+      if (start >= 0 && start < 40) {
+        const body = rest.slice(start).replace(/```[\s\S]*$/, '').trim();
+        try {
+          JSON.parse(body);
+          return true;
+        } catch { /* 다음 후보 */ }
+      }
+      i = content.indexOf(fence, i + 1);
+    }
+  }
+  return false;
+}
+
 export function containsRawDumpMarker(content: string): boolean {
   if (!content) return false;
   /* 카드 fence가 있으면 raw 덤프로 취급 X */
@@ -152,7 +174,7 @@ export function shouldHideMessage(role: string, rawContent: string): boolean {
      모델에게 카드를 출력하게 시키면 매번 자기 말로 요약해 카드가 사라진다(실측 5회+,
      비서·서브에이전트 양쪽). 스크립트가 카드를 출력하고 도구 결과로 흘려보내면
      모델이 개입할 여지가 없다. 에이전트가 늘어도 여기 손댈 것이 없다. */
-  if (role === 'toolResult' && CARD_FENCES.some(f => c.includes(f))) return false;
+  if (role === 'toolResult' && looksLikeRenderableCard(c)) return false;
 
   /* 0. role whitelist — user/assistant/system 셋만 통과.
      OpenClaw는 tool 결과를 role='toolResult', role='toolCall' 별도 메시지로 저장하는데
@@ -191,7 +213,7 @@ export function shouldHideMessage(role: string, rawContent: string): boolean {
 
   /* 3. assistant 메시지: raw 덤프 마커 / JSON 단독 응답 / BOOTSTRAP 누출 거름 */
   if (KIND_CARD_RE.test(c)) return false;        // 카드 묶음은 무조건 통과
-  if (CARD_FENCE_MARKERS.some(f => c.includes(f))) return false;   // 문장 뒤에 붙은 펜스도 카드다
+  if (looksLikeRenderableCard(c)) return false;   // 문장 뒤에 붙은 펜스도 카드다
   if (containsRawDumpMarker(c)) return true;
   if (/^HEARTBEAT(_[A-Z]+)?\b/i.test(c)) return true;
   if (c === 'Source: memory/' || /^Source: memory\//.test(c)) return true;

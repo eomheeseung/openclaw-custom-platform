@@ -343,6 +343,7 @@ async function pollUser(u, state) {
       key0 = `agent:secretary:dooray-${week0}`;      // 주차마다 하나 — 잡담이 쌓이는 곳
       label0 = `두레이 대화 · ${week0}`;
     }
+    state.sessionKey = key0;      // 회신 링크가 이 세션을 가리켜야 한다 (notify 가 읽는다)
     const labeled = state.labeledKeys || {};
     if (labeled[key0]) label0 = null;                 // 이름표는 세션마다 한 번
     if (label0) {
