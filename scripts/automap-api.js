@@ -1770,11 +1770,14 @@ const server = http.createServer(async (req, res) => {
     if (!validateUserNN(slot)) { jsonRes(res, 400, { ok: false, error: 'Invalid slot' }); return; }
     const configPath = `/opt/openclaw/data/user${slot}/openclaw.json`;
     try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      // 주석이 섞인 설정(JSONC)도 읽어야 한다 — user07·13 에는 temperature 금지 주석이 있다
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^\s*\/\/.*$/gm, ''));
       const agentList = (config.agents?.list || []).map(a => ({
         id: a.id, name: a.identity?.name || a.name || a.id,
         emoji: a.identity?.emoji || '', default: !!a.default,
         isDiscord: a.id.endsWith('-discord'),
+        // 에이전트마다 다른 모델을 쓸 수 있다. 계정 기본값만 보여주면 실제와 달라진다.
+        model: typeof a.model === 'string' ? a.model : (a.model?.primary || ''),
       }));
       const model = config.agents?.defaults?.model?.primary || 'unknown';
       const discordAccounts = Object.keys(config.channels?.discord?.accounts || {});

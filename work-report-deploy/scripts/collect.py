@@ -113,7 +113,8 @@ def dooray_projects():
     return [p for p in d.get("projects", []) if p.get("state") != "archived"], True
 
 
-WIP_STALE_DAYS = 28       # 진행중 task 를 '살아있다'고 볼 최대 방치 기간
+WIP_STALE_DAYS = 14       # 진행중 task 를 '살아있다'고 볼 최대 방치 기간.
+# 28일이면 24일 방치된 업무가 '진행 중' 으로 올라온다(실측). 지난주까지 손댄 것만 남긴다.
 # "8월 2주차 보고" — 주간보고를 쓰는 업무 자체다. 주간보고에 적을 내용이 아니다.
 # 실측: 김다영 8건 전부, 김예림 5건 중 4건이 이것이었다(모두 '전략사업팀-보고관리').
 RE_REPORT_TASK = re.compile(r"^\s*\d{1,2}월\s*\d\s*주차\s*보고\s*$")

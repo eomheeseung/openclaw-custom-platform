@@ -32,6 +32,8 @@ interface SlotAgent {
   emoji: string;
   default: boolean;
   isDiscord: boolean;
+  /** 에이전트별 모델 지정 (없으면 계정 기본값을 따른다) */
+  model?: string;
 }
 
 type AdminTab = 'users' | 'containers' | 'usage' | 'config' | 'business';
@@ -489,12 +491,14 @@ export function AdminPanel() {
                   {expanded && agentInfo && (
                     <div className="px-14 pb-4 space-y-3">
                       <div className="flex items-center gap-2 text-xs text-text-secondary">
-                        <Cpu className="w-3 h-3" /> 모델: <span className="text-text-primary">{agentInfo.model}</span>
+                        <Cpu className="w-3 h-3" /> 기본 모델: <span className="text-text-primary">{agentInfo.model}</span>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {agentInfo.agents.filter(a => !a.isDiscord).map(a => (
                           <span key={a.id} className={`px-2 py-0.5 rounded text-xs ${a.default ? 'bg-accent/20 text-accent' : 'bg-background text-text-secondary'}`}>
                             {a.emoji || '🤖'} {a.name}
+                            {/* 계정 기본값과 다른 모델을 쓰는 에이전트만 표시 */}
+                            {a.model && <span className="ml-1 opacity-70">· {a.model.split('/').pop()}</span>}
                           </span>
                         ))}
                       </div>
