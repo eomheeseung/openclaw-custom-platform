@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Server, Activity, Settings, RefreshCw, UserPlus, UserMinus, RotateCcw, ChevronDown, ChevronRight, Cpu, HardDrive, Loader2, CheckCircle, XCircle, AlertTriangle, BarChart3, DollarSign, Package } from 'lucide-react';
+import { BusinessMaster } from './BusinessMaster';
+import { Users, Server, Activity, Settings, RefreshCw, UserPlus, UserMinus, RotateCcw, ChevronDown, ChevronRight, Cpu, HardDrive, Loader2, CheckCircle, XCircle, AlertTriangle, BarChart3, DollarSign, Package, Briefcase } from 'lucide-react';
 
 interface UserSlot {
   slot: string;
@@ -33,7 +34,7 @@ interface SlotAgent {
   isDiscord: boolean;
 }
 
-type AdminTab = 'users' | 'containers' | 'usage' | 'config';
+type AdminTab = 'users' | 'containers' | 'usage' | 'config' | 'business';
 
 interface UsageDay {
   date?: string;
@@ -70,7 +71,7 @@ function timeAgo(ts: number | null): string {
   return `${Math.floor(diff / 86400000)}일 전`;
 }
 
-const ADMIN_TABS: AdminTab[] = ['users', 'containers', 'usage', 'config'];
+const ADMIN_TABS: AdminTab[] = ['users', 'containers', 'usage', 'config', 'business'];
 
 function pathToAdminTab(): AdminTab {
   const m = window.location.pathname.match(/^\/admin\/([a-z]+)/);
@@ -340,6 +341,7 @@ export function AdminPanel() {
     { key: 'containers', label: '컨테이너', icon: <Server className="w-4 h-4" /> },
     { key: 'usage', label: 'API 사용량', icon: <BarChart3 className="w-4 h-4" /> },
     { key: 'config', label: '시스템', icon: <Settings className="w-4 h-4" /> },
+    { key: 'business', label: '사업 관리', icon: <Briefcase className="w-4 h-4" /> },
   ];
 
   return (
@@ -395,6 +397,13 @@ export function AdminPanel() {
           </button>
         ))}
       </div>
+
+      {/* 사업 마스터 Tab — 담당자 배정이 남의 주간보고 내용을 바꾸므로 관리자 전용 */}
+      {tab === 'business' && (
+        <BusinessMaster userNames={Object.fromEntries(
+          slots.filter(s => s.name || s.email).map(s => [s.slot, s.name || (s.email || '').split('@')[0]]),
+        )} />
+      )}
 
       {/* Users Tab */}
       {tab === 'users' && (

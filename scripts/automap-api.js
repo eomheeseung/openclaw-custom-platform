@@ -1292,6 +1292,144 @@ const server = http.createServer(async (req, res) => {
   // ===== Admin API =====
 
   // GET /api/admin/users
+  /* ── 사업 마스터 (/opt/openclaw/data/businesses.json) ─────────────────────
+     한 파일을 16명이 공유한다. owners/supporters 를 바꾸면 그 사람의 주간보고 내용이
+     바뀌므로 관리자만 만진다. 양식 검증은 여기서 한다 — 화면에서만 막으면
+     API 를 직접 부르는 경로로 깨진 데이터가 들어온다. */
+  const BIZ_PATH = '/opt/openclaw/data/businesses.json';
+  const loadBiz = () => JSON.parse(fs.readFileSync(BIZ_PATH, 'utf8'));
+  const saveBiz = (doc) => {
+    const tmp = `${BIZ_PATH}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(doc, null, 2));
+    try { fs.chownSync(tmp, 1000, 1000); } catch {}
+    fs.renameSync(tmp, BIZ_PATH);      // 원자적 교체 — 수집이 반쯤 쓰인 파일을 읽지 않게
+  };
+  const normKey = (v) => String(v || '').toLowerCase().replace(/[\s()[\]·・,.\-_/]+/g, '');
+
+  /** 저장 전 검증. 통과하면 정규화된 사업 객체를, 아니면 에러 문자열을 돌려준다. */
+  function validateBiz(input, doc, selfId) {
+    const others = (doc.businesses || []).filter(b => b.id !== selfId && !b.closed);
+    const name = String(input.name || '').trim();
+    const alias = String(input.alias || '').trim();
+    const org = String(input.org || '').trim();
+    if (!name) return { error: '사업명을 입력하세요' };
+    if (!alias) return { error: '별칭을 입력하세요 — 수집이 이 별칭으로 사업을 찾습니다' };
+    if (alias.length < 2) return { error: '별칭은 2자 이상이어야 합니다 (짧으면 엉뚱한 항목이 붙습니다)' };
+    if (!org) return { error: '발주처를 입력하세요' };
+    if (others.some(b => normKey(b.name) === normKey(name))) return { error: `이미 있는 사업명입니다: ${name}` };
+
+    const aliases = (Array.isArray(input.aliases) ? input.aliases : [])
+      .map(a => String(a || '').trim()).filter(Boolean);
+    const mine = [alias, ...aliases].map(normKey);
+    if (new Set(mine).size !== mine.length) return { error: '별칭이 중복됩니다' };
+    for (const b of others) {
+      for (const a of [b.alias, ...(b.aliases || [])]) {
+        if (a && mine.includes(normKey(a))) return { error: `다른 사업이 쓰는 별칭입니다: ${a} (${b.name})` };
+      }
+    }
+
+    const validNN = (v) => /^\d{2}$/.test(v) && +v >= 1 && +v <= 16;
+    const owners = [...new Set((input.owners || []).map(String))];
+    const supporters = [...new Set((input.supporters || []).map(String))];
+    if (owners.length === 0) return { error: '담당자를 한 명 이상 지정하세요' };
+    for (const v of [...owners, ...supporters]) {
+      if (!validNN(v)) return { error: `사용자 번호가 올바르지 않습니다: ${v}` };
+    }
+    const dup = owners.filter(v => supporters.includes(v));
+    if (dup.length) return { error: `담당자와 지원자에 같이 들어간 사람이 있습니다: ${dup.join(', ')}` };
+
+    const dooray = String(input.dooray_project_id || '').trim();
+    if (dooray && !/^\d+$/.test(dooray)) return { error: '두레이 프로젝트 ID는 숫자입니다' };
+    const figma = (Array.isArray(input.figma_file_keys) ? input.figma_file_keys : [])
+      .map(k => String(k || '').trim()).filter(Boolean);
+    for (const k of figma) {
+      if (!/^[A-Za-z0-9]{10,}$/.test(k)) return { error: `피그마 파일 키 형식이 아닙니다: ${k}` };
+    }
+
+    return {
+      biz: {
+        name, alias, org,
+        ...(aliases.length ? { aliases } : {}),
+        owners, supporters,
+        members: [...new Set([...owners, ...supporters])],   // 항상 유도한다 — 손으로 넣으면 어긋난다
+        dooray_project_id: dooray,
+        figma_file_keys: figma,
+        ...(input.kind === 'service' ? { kind: 'service' } : {}),
+      },
+    };
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/businesses') {
+    if (!getAuthSession(req)) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const doc = loadBiz();
+      jsonRes(res, 200, { ok: true, businesses: doc.businesses || [], all_access: doc.all_access || [] });
+    } catch (e) { jsonRes(res, 500, { ok: false, error: e.message }); }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/businesses') {
+    if (!getAuthSession(req)) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    readBody(req).then(raw => {
+      const input = JSON.parse(raw || '{}');
+      const doc = loadBiz();
+      const v = validateBiz(input, doc, null);
+      if (v.error) { jsonRes(res, 400, { ok: false, error: v.error }); return; }
+      // id 는 사용자가 못 정한다 — 자사 서비스는 svc-, 수주 사업은 biz-
+      const prefix = input.kind === 'service' ? 'svc' : 'biz';
+      const used = (doc.businesses || []).filter(b => b.id.startsWith(`${prefix}-`))
+        .map(b => parseInt(b.id.slice(prefix.length + 1), 10) || 0);
+      const id = `${prefix}-${String(Math.max(0, ...used) + 1).padStart(2, '0')}`;
+      doc.businesses = [...(doc.businesses || []), { id, ...v.biz }];
+      saveBiz(doc);
+      jsonRes(res, 200, { ok: true, id, businesses: doc.businesses });
+    }).catch(e => jsonRes(res, 500, { ok: false, error: e.message }));
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/admin/businesses') {
+    if (!getAuthSession(req)) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    readBody(req).then(raw => {
+      const input = JSON.parse(raw || '{}');
+      const doc = loadBiz();
+      // all_access 만 바꾸는 요청 (전 사업 분류 대상 — 디자이너·팀장급)
+      if (Array.isArray(input.all_access) && !input.id) {
+        const bad = input.all_access.filter(v => !/^\d{2}$/.test(String(v)));
+        if (bad.length) { jsonRes(res, 400, { ok: false, error: `사용자 번호가 올바르지 않습니다: ${bad.join(', ')}` }); return; }
+        doc.all_access = [...new Set(input.all_access.map(String))];
+        saveBiz(doc);
+        jsonRes(res, 200, { ok: true, all_access: doc.all_access });
+        return;
+      }
+      const idx = (doc.businesses || []).findIndex(b => b.id === input.id);
+      if (idx < 0) { jsonRes(res, 404, { ok: false, error: '없는 사업입니다' }); return; }
+      const v = validateBiz(input, doc, input.id);
+      if (v.error) { jsonRes(res, 400, { ok: false, error: v.error }); return; }
+      const prev = doc.businesses[idx];
+      doc.businesses[idx] = { id: prev.id, ...v.biz, ...(prev.closed ? { closed: true } : {}) };
+      saveBiz(doc);
+      jsonRes(res, 200, { ok: true, businesses: doc.businesses });
+    }).catch(e => jsonRes(res, 500, { ok: false, error: e.message }));
+    return;
+  }
+
+  /* 삭제가 아니라 '종료' 다 — 지우면 지난 보고서의 사업 태그가 깨진다.
+     closed 는 수집·분류에서 제외되고 화면에서는 접힌 목록으로 남는다. */
+  if (req.method === 'DELETE' && url.pathname === '/api/admin/businesses') {
+    if (!getAuthSession(req)) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    const id = url.searchParams.get('id');
+    const reopen = url.searchParams.get('reopen') === '1';
+    try {
+      const doc = loadBiz();
+      const b = (doc.businesses || []).find(x => x.id === id);
+      if (!b) { jsonRes(res, 404, { ok: false, error: '없는 사업입니다' }); return; }
+      if (reopen) delete b.closed; else b.closed = true;
+      saveBiz(doc);
+      jsonRes(res, 200, { ok: true, businesses: doc.businesses });
+    } catch (e) { jsonRes(res, 500, { ok: false, error: e.message }); }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/users') {
     const auth = getAuthSession(req);
     if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }

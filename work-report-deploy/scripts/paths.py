@@ -36,19 +36,27 @@ def data_dir(nn):
     return "/home/node/.openclaw" if in_container() else f"/opt/openclaw/data/user{nn}"
 
 
+def _drop_closed(doc):
+    """종료된 사업은 분류 대상에서 뺀다. 데이터는 남겨야 지난 보고서의 사업 태그가
+    안 깨지므로 지우지 않고 표시만 한다."""
+    if isinstance(doc, dict) and isinstance(doc.get("businesses"), list):
+        doc["businesses"] = [b for b in doc["businesses"] if not b.get("closed")]
+    return doc
+
+
 def load_master():
-    """businesses.json 문서 전체 (all_access 포함)."""
+    """businesses.json 문서 전체 (all_access 포함). 종료 사업은 뺀다."""
     urls = API_URLS if in_container() else list(reversed(API_URLS))
     for u in urls:
         try:
             with urllib.request.urlopen(u, timeout=5) as r:
                 d = json.loads(r.read().decode())
                 if d.get("ok"):
-                    return d
+                    return _drop_closed(d)
         except Exception:
             continue
     try:
-        return json.load(open(FILE_FALLBACK))
+        return _drop_closed(json.load(open(FILE_FALLBACK)))
     except Exception:
         return {}
 
@@ -60,10 +68,10 @@ def load_businesses():
             with urllib.request.urlopen(u, timeout=5) as r:
                 d = json.loads(r.read().decode())
                 if d.get("ok"):
-                    return d.get("businesses", [])
+                    return _drop_closed(d).get("businesses", [])
         except Exception:
             continue
     try:
-        return json.load(open(FILE_FALLBACK)).get("businesses", [])
+        return _drop_closed(json.load(open(FILE_FALLBACK))).get("businesses", [])
     except Exception:
         return []
