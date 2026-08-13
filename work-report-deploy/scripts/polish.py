@@ -20,6 +20,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
+import verify_draft
 import week_util
 
 STATUS = {"done", "wip", "next"}
@@ -28,6 +29,16 @@ STATUS = {"done", "wip", "next"}
 def _lists(draft):
     yield from ((g["items"], g) for g in draft.get("businesses") or [])
     yield (draft.setdefault("common", []), None)
+
+
+def _restore_from(new, origin):
+    """원문에 있던 단어가 초성만 같고 글자가 다르게 바뀌었으면 원문 글자로 되돌린다.
+    사전(TERMS)에 없는 고유명사·사업명이 깨지는 경우를 잡는다."""
+    if not new or not origin:
+        return new
+    import re as _re
+    words = [w for w in _re.split(r"[^0-9A-Za-z가-힣]+", origin) if len(w) >= 2]
+    return verify_draft.fix_typos(new, terms=words) if words else new
 
 
 def apply(draft, edits):
@@ -57,7 +68,13 @@ def apply(draft, edits):
             dropped += 1
             continue
         if val.get("text"):
-            it["text"] = str(val["text"]).strip()[:300]
+            # 모델이 한글을 다시 타이핑하면서 글자를 깨뜨린다(업무→업묵). 저장 직전에 되돌린다.
+            # 여기서 안 잡으면 모델이 파일을 다시 읽고 스스로 고치려 들면서 같은 요청이
+            # 대여섯 번 반복된다(실측: 한 회차 170초).
+            new = str(val["text"]).strip()[:300]
+            fixed = verify_draft.fix_typos(new)
+            fixed = _restore_from(fixed, it.get("raw_text") or it.get("text") or "")
+            it["text"] = fixed
         if val.get("status") in STATUS:
             it["status"] = val["status"]
         changed += 1

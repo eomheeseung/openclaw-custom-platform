@@ -12,6 +12,9 @@
    `exec: python3 /home/node/documents/work-report/scripts/polish.py '{"3":{"text":"..."},"7":{"status":"next"},"12":{"drop":true}}'`
    ⚠ draft 파일을 열지도, 통째로 다시 쓰지도 마라. 9KB 를 재작성하느라 4분이 걸렸다(실측 247초).
    고칠 게 없으면 이 단계를 건너뛴다.
+   ⚠ **한 번만 보내고 3번으로 넘어가라.** 결과를 다시 확인하거나 고쳐 쓰지 마라 —
+   글자가 깨졌는지는 스크립트가 알아서 되돌린다. 확인하려 들면 같은 요청이 예닐곱 번
+   반복되어 3분이 걸린다(실측 170초).
 
 3. `exec: python3 /home/node/documents/work-report/scripts/finish.py`
    두레이에서 온 요청이면 끝에 `--dooray` 만 붙인다.
