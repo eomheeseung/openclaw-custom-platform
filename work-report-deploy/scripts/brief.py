@@ -28,10 +28,6 @@ MAIL_DAYS = 3
 DUE_DAYS = 1          # 오늘·내일 마감까지
 OVERDUE_DAYS = 7      # 지난 마감은 최근 것만 (작년 것까지 26줄 나왔다)
 TASK_MAX = 5
-FIGMA_DAYS = 7        # 미해결 코멘트를 볼 기간
-FIGMA_MAX = 3
-# 색상값·치수만 적어둔 핀은 요청이 아니다 (실측: "#FFFFFF", "#898989")
-RE_FIG_NOISE = __import__("re").compile(r"^[#\d\s.,%a-fA-F]{0,10}$")
 TOMORROW_MAX = 3
 
 
@@ -109,35 +105,47 @@ def due_tasks(nn, today):
     return sorted(out)
 
 
-def figma_comments(nn, today):
-    """내가 등록한 파일의 **미해결** 코멘트. 디자인 작업은 요청이 코멘트로 온다 —
-    메일·두레이 어디에도 안 남아서 이걸 안 보면 놓친다."""
+SR_API_LIMIT = 200
+
+
+def sr_summary(nn, today):
+    """사업별 SR 현황 — 오늘 들어온 것과 아직 안 닫힌 것.
+
+    ⚠ 주간보고에는 SR 을 쓰지 않는다(목록에 처리 담당자가 없어 타인 처리 건이 섞인다).
+    브리핑은 '무엇이 들어왔나' 를 알리는 것이라 담당자 구분이 필요 없다."""
+    base_dir = f"{paths.data_dir(nn)}/business-report"
     try:
-        integ = json.load(open(f"{paths.data_dir(nn)}/integrations.json"))
+        ids = json.load(open(f"{base_dir}/projects.json")).get("projects") or []
     except Exception:
         return []
-    fig = integ.get("figma") or {}
-    token, files = fig.get("token"), fig.get("fileKeys") or []
-    if not token or not files:
-        return []
-    since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=FIGMA_DAYS)).strftime("%Y-%m-%d")
     out = []
-    for f in files:
-        cmd = ["curl", "-s", "-m", "20", "-H", f"X-Figma-Token: {token}",
-               f"https://api.figma.com/v1/files/{f.get('key')}/comments"]
+    for pid in ids:
+        env = {}
         try:
-            d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout)
+            for line in open(f"{base_dir}/{pid}/auth.env"):
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.strip().split("=", 1)
+                    env[k] = v
+            name = json.load(open(f"{base_dir}/{pid}/meta.json")).get("name") or pid
         except Exception:
             continue
-        for c in d.get("comments", []):
-            at = (c.get("created_at") or "")[:10]
-            if c.get("resolved_at") or at < since:
-                continue
-            msg = " ".join((c.get("message") or "").split())
-            if not msg or RE_FIG_NOISE.match(msg):
-                continue
-            out.append((at, f.get("name") or "", (c.get("user") or {}).get("handle") or "", msg))
-    return sorted(out, reverse=True)
+        base, tenant, tok = env.get("SR_BASE_URL"), env.get("SR_TENANT"), env.get("SR_API_TOKEN")
+        if not (base and tenant and tok):
+            continue
+        frm = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
+        url = (f"{base}/api/{tenant}/sr?date_field=created_at"
+               f"&from={frm}&to={today}&limit={SR_API_LIMIT}")
+        cmd = ["curl", "-s", "-m", "25", "-H", f"Authorization: Bearer {tok}", url]
+        try:
+            d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=35).stdout)
+        except Exception:
+            continue
+        items = d if isinstance(d, list) else (d.get("data") or d.get("items") or [])
+        new_today = [i for i in items if (i.get("created_at") or "")[:10] == today]
+        open_cnt = sum(1 for i in items if i.get("status_code") != "closed")
+        if new_today or open_cnt:
+            out.append((name, new_today, open_cnt))
+    return out
 
 
 def compose(nn, now):
@@ -165,12 +173,13 @@ def compose(nn, now):
         if len(ev2) > TOMORROW_MAX:
             lines.append(f"· 외 {len(ev2) - TOMORROW_MAX}건")
 
-    cmts = figma_comments(nn, today)
-    if cmts:
-        lines += ["", "■ 피그마 미해결 코멘트"]
-        lines += [f"· {name} · {who} — {msg[:40]}" for _, name, who, msg in cmts[:FIGMA_MAX]]
-        if len(cmts) > FIGMA_MAX:
-            lines.append(f"· 외 {len(cmts) - FIGMA_MAX}건")
+
+    for name, new_today, open_cnt in sr_summary(nn, today):
+        lines += ["", f"■ SR · {name}"]
+        for i in new_today[:3]:
+            lines.append(f"· 신규 {i.get('sr_no')} {i.get('title','')[:40]}")
+        if open_cnt:
+            lines.append(f"· 미처리 {open_cnt}건")
 
     tasks = due_tasks(nn, today)
     if tasks:
