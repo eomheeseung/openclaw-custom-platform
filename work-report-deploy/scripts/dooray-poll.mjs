@@ -199,6 +199,38 @@ function users() {
 }
 
 /** 웹 UI 와 같은 경로. challenge → connect → chat.send. */
+/** 세션 이름표만 붙인다. 응답이 끝난 뒤에 불러야 한다 —
+    실행 중에 붙이면 응답 완료 시 세션이 다시 저장되면서 이름표가 지워진다(실측). */
+function labelSession(nn, sessionKey, label) {
+  return new Promise((resolve) => {
+    const cfg = readJson(`${DATA}/user${nn}/openclaw.json`);
+    const token = cfg?.gateway?.auth?.token;
+    if (!token) return resolve(false);
+    const ws = new WebSocket(`ws://127.0.0.1:${18000 + Number(nn)}`, {
+      headers: { Origin: `http://127.0.0.1:${18000 + Number(nn)}` },
+    });
+    const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(false); }, 15_000);
+    let id = 0;
+    const req = (m, p) => ws.send(JSON.stringify({ type: "req", id: `r${++id}`, method: m, params: p }));
+    const done = (ok) => { clearTimeout(timer); try { ws.close(); } catch {} resolve(ok); };
+    ws.on("error", () => done(false));
+    ws.on("message", (raw) => {
+      let f; try { f = JSON.parse(raw.toString()); } catch { return; }
+      if (f.type === "event" && f.event === "connect.challenge") {
+        req("connect", {
+          minProtocol: 3, maxProtocol: 3,
+          client: { id: "openclaw-control-ui", displayName: "TideClaw Dooray", version: "1.0.0", platform: "node", mode: "webchat" },
+          scopes: ["operator.admin"], caps: [], auth: { token },
+        });
+        return;
+      }
+      if (f.type !== "res") return;
+      if (f.payload?.type === "hello-ok") { req("sessions.patch", { key: sessionKey, label }); return; }
+      done(!!f.ok);
+    });
+  });
+}
+
 function sendToSession(nn, message, sessionKey, label) {
   return new Promise((resolve) => {
     const cfg = readJson(`${DATA}/user${nn}/openclaw.json`);
@@ -235,9 +267,8 @@ function sendToSession(nn, message, sessionKey, label) {
       if (f.payload?.status === "started") {
         // 이름 지정은 chat.send **뒤에** — 세션이 없으면 patch 가 조용히 실패한다(실측).
         // derivedTitle 이 노이즈(부트스트랩·해시 문구)일 때 웹 UI 가 이 label 을 쓴다.
-        if (label) { req("sessions.patch", { key: sessionKey, label }); return; }
         done(true);
-      } else if (f.payload?.entry) done(true);   // sessions.patch 응답
+      } else if (f.payload?.entry) done(true);
       else if (f.error) { log(`user${nn} chat.send 실패`, JSON.stringify(f.error).slice(0, 120)); done(false); }
     });
   });
@@ -272,6 +303,12 @@ async function pollUser(u, state) {
     });
     if (replied) {
       state.pending = null;
+      if (state.pendingLabel) {
+        // 응답이 끝난 지금이 이름표를 붙일 때다
+        const ok = await labelSession(u.nn, state.pendingLabel.key, state.pendingLabel.label);
+        log(`user${u.nn} 이름표 ${ok ? "적용" : "실패"}: ${state.pendingLabel.label}`);
+        state.pendingLabel = null;
+      }
     } else if (Date.now() - state.pending.at > REPLY_TIMEOUT_MS) {
       await sayToDooray(u.nn, "응답이 지연되고 있습니다. 다시 «..» 로 요청하시거나 "
         + `웹에서 확인해주세요 → ${webLink(u.nn, state.pending.key)}`);
@@ -293,6 +330,7 @@ async function pollUser(u, state) {
       key0 = sessionKeyFor(week0, agentId, `${now.getHours()}${String(now.getMinutes()).padStart(2, "0")}`);
       label0 = sessionLabelWith(agentDisplayName(u.nn, agentId), now);
       state.sessionKey = key0;
+      state.pendingLabel = { key: key0, label: label0 };   // 응답이 끝난 뒤에 붙인다
       log(`user${u.nn} → ${agentId} 새 대화 (${key0.split(":").pop()})`);
     }
     // 회신 지시를 메시지에 함께 싣는다 — BOOTSTRAP 은 세션 첫 턴에만 읽히므로
@@ -305,7 +343,7 @@ async function pollUser(u, state) {
       `   카드(work-draft 등)는 두레이로 보내지 마. 대신 이 링크를 회신에 그대로 붙여라:`,
       `   ${webLink(u.nn, key0)}`,
     ].join("\n");
-    const ok = await sendToSession(u.nn, body, key0, label0);
+    const ok = await sendToSession(u.nn, body, key0, null);
     if (!ok) {
       state.sessionKey = null;          // 실패한 세션을 붙들고 있지 않는다
       await sayToDooray(u.nn, "요청을 전달하지 못했습니다. 잠시 후 다시 «..» 로 보내주시거나 "
