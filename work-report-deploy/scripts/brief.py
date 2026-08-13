@@ -28,8 +28,11 @@ MAIL_DAYS = 3
 DUE_DAYS = 1          # 오늘·내일 마감까지
 OVERDUE_DAYS = 7      # 지난 마감은 최근 것만 (작년 것까지 26줄 나왔다)
 TASK_MAX = 5
-REPORT_WEEKDAY = 3    # 목요일 — 주간보고 마감일
-REPORT_DEADLINE = "17시"
+FIGMA_DAYS = 7        # 미해결 코멘트를 볼 기간
+FIGMA_MAX = 3
+# 색상값·치수만 적어둔 핀은 요청이 아니다 (실측: "#FFFFFF", "#898989")
+RE_FIG_NOISE = __import__("re").compile(r"^[#\d\s.,%a-fA-F]{0,10}$")
+TOMORROW_MAX = 3
 
 
 def _api(url, params):
@@ -106,6 +109,37 @@ def due_tasks(nn, today):
     return sorted(out)
 
 
+def figma_comments(nn, today):
+    """내가 등록한 파일의 **미해결** 코멘트. 디자인 작업은 요청이 코멘트로 온다 —
+    메일·두레이 어디에도 안 남아서 이걸 안 보면 놓친다."""
+    try:
+        integ = json.load(open(f"{paths.data_dir(nn)}/integrations.json"))
+    except Exception:
+        return []
+    fig = integ.get("figma") or {}
+    token, files = fig.get("token"), fig.get("fileKeys") or []
+    if not token or not files:
+        return []
+    since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=FIGMA_DAYS)).strftime("%Y-%m-%d")
+    out = []
+    for f in files:
+        cmd = ["curl", "-s", "-m", "20", "-H", f"X-Figma-Token: {token}",
+               f"https://api.figma.com/v1/files/{f.get('key')}/comments"]
+        try:
+            d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout)
+        except Exception:
+            continue
+        for c in d.get("comments", []):
+            at = (c.get("created_at") or "")[:10]
+            if c.get("resolved_at") or at < since:
+                continue
+            msg = " ".join((c.get("message") or "").split())
+            if not msg or RE_FIG_NOISE.match(msg):
+                continue
+            out.append((at, f.get("name") or "", (c.get("user") or {}).get("handle") or "", msg))
+    return sorted(out, reverse=True)
+
+
 def compose(nn, now):
     today = now.strftime("%Y-%m-%d")
     lines = [f"☀ {now.strftime('%m월 %d일')} 브리핑", ""]
@@ -123,6 +157,21 @@ def compose(nn, now):
     else:
         lines.append("· 없음")
 
+    tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    ev2 = today_events(nn, tomorrow)
+    if ev2:
+        lines += ["", "■ 내일 일정"]
+        lines += [f"· {h} {t}" for h, t in ev2[:TOMORROW_MAX]]
+        if len(ev2) > TOMORROW_MAX:
+            lines.append(f"· 외 {len(ev2) - TOMORROW_MAX}건")
+
+    cmts = figma_comments(nn, today)
+    if cmts:
+        lines += ["", "■ 피그마 미해결 코멘트"]
+        lines += [f"· {name} · {who} — {msg[:40]}" for _, name, who, msg in cmts[:FIGMA_MAX]]
+        if len(cmts) > FIGMA_MAX:
+            lines.append(f"· 외 {len(cmts) - FIGMA_MAX}건")
+
     tasks = due_tasks(nn, today)
     if tasks:
         lines += ["", "■ 마감 임박"]
@@ -130,10 +179,6 @@ def compose(nn, now):
         if len(tasks) > TASK_MAX:
             lines.append(f"· 외 {len(tasks) - TASK_MAX}건")
 
-    if now.weekday() == REPORT_WEEKDAY:
-        lines += ["", f"■ 오늘 {REPORT_DEADLINE} 주간보고 마감"]
-
-    lines += ["", f"«..주간보고 작성해» 처럼 답하시면 처리합니다"]
     return "\n".join(lines)
 
 
