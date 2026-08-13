@@ -106,6 +106,8 @@ function webLink(nn, sessionKey) {
 }
 // 두레이 호출 제한은 계정 단위 burst 20 / 초당 5회 충전.
 // 15초 주기 × 14명 = 0.93회/초 → 한도의 19%. 여유가 있으니 응답성을 택한다.
+const ACK_TEXT = "요청 확인했습니다. 처리 중입니다 ⏳";   // 접수 알림 — 이걸 '답' 으로 세면 안 된다
+const REPLY_TIMEOUT_MS = 4 * 60_000;  // 이 안에 답이 없으면 지연 안내 (초안 생성은 1~2분)
 const IDLE_MS = 15_000;               // 평소에도 15초 안에는 잡는다
 const ACTIVE_MS = 5_000;              // 대화 중이면 더 촘촘히
 const ACTIVE_WINDOW_MS = 30 * 60_000;
@@ -165,6 +167,23 @@ async function resolveChannel(nn, token, memberId, state) {
     log(`user${nn} 채널 확인 ${state.channelId}`);
   }
   return state.channelId;
+}
+
+/** 데몬이 두레이로 직접 알린다 (접수·지연 안내). 봇으로 보내야 알림이 뜬다. */
+async function sayToDooray(nn, text) {
+  const integ = readJson(`${DATA}/user${nn}/integrations.json`) || {};
+  const d = integ.dooray || {};
+  if (!d.botUrl) return false;
+  try {
+    await fetch(d.botUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ botName: "TideClaw", text }),
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function users() {
@@ -242,6 +261,24 @@ async function pollUser(u, state) {
   const maxSeq = Math.max(last, ...(body.result || []).map((m) => Number(m.seq) || 0));
   if (maxSeq > last) state.lastSeq = maxSeq;
 
+  // 답이 왔는지 지켜본다 — 봇이 보낸 새 메시지가 있으면 응답이 도착한 것이다
+  if (state.pending) {
+    const botId = String((readJson(`${DATA}/user${u.nn}/integrations.json`)?.dooray || {}).botMemberId || "");
+    const replied = (body.result || []).some((m) => {
+      const who = String(m.sender?.member?.organizationMemberId || "");
+      if (!who || who !== botId) return false;
+      if ((m.text || "").trim() === ACK_TEXT) return false;   // 접수 알림은 답이 아니다
+      return Date.parse(m.sentAt || 0) >= state.pending.at;
+    });
+    if (replied) {
+      state.pending = null;
+    } else if (Date.now() - state.pending.at > REPLY_TIMEOUT_MS) {
+      await sayToDooray(u.nn, "응답이 지연되고 있습니다. 다시 «..» 로 요청하시거나 "
+        + `웹에서 확인해주세요 → ${webLink(u.nn, state.pending.key)}`);
+      state.pending = null;
+    }
+  }
+
   for (const m of fresh) {
     const text = m.text.trim().slice(PREFIX.length).trim();
     if (!text) continue;
@@ -269,7 +306,15 @@ async function pollUser(u, state) {
       `   ${webLink(u.nn, key0)}`,
     ].join("\n");
     const ok = await sendToSession(u.nn, body, key0, label0);
-    if (!ok) state.sessionKey = null;   // 실패한 세션을 붙들고 있지 않는다
+    if (!ok) {
+      state.sessionKey = null;          // 실패한 세션을 붙들고 있지 않는다
+      await sayToDooray(u.nn, "요청을 전달하지 못했습니다. 잠시 후 다시 «..» 로 보내주시거나 "
+        + `웹에서 확인해주세요 → ${webLink(u.nn, key0)}`);
+    } else {
+      // 접수 확인 — 이게 없으면 처리 중인지 죽은 건지 알 수 없다
+      await sayToDooray(u.nn, ACK_TEXT);
+      state.pending = { at: Date.now(), key: key0 };
+    }
     log(`user${u.nn} seq${m.seq} → ${ok ? "투입" : "실패"}: ${text.slice(0, 40)}`);
   }
 }
