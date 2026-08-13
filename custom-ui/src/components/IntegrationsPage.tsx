@@ -16,6 +16,7 @@ export function IntegrationsPage() {
   const [figToken, setFigToken] = useState('');
   const [figUrls, setFigUrls] = useState('');
   const [figMsg, setFigMsg] = useState('');
+  const [figExpires, setFigExpires] = useState('');
 
   const loadInt = useCallback(async () => {
     try {
@@ -87,9 +88,9 @@ export function IntegrationsPage() {
     try {
       await fetch('/api/integrations/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ figma: { token: figToken.trim() }, userNN: getUserNN() }),
+        body: JSON.stringify({ figma: { token: figToken.trim(), expiresAt: figExpires || '' }, userNN: getUserNN() }),
       });
-      setFigToken(''); await loadInt();
+      setFigToken(''); setFigExpires(''); await loadInt();
     } finally { setSaving(''); }
   };
 
@@ -127,6 +128,14 @@ export function IntegrationsPage() {
     });
     await loadInt();
   };
+
+  /* 피그마 개인 토큰은 최대 90일이다. 만료를 놓치면 수집이 조용히 멈추므로 남은 날을 눈에 띄게 둔다. */
+  const figDday = (() => {
+    const raw = intState.figma?.expiresAt;
+    if (!raw) return null;
+    const days = Math.ceil((new Date(raw + 'T23:59:59').getTime() - Date.now()) / 86400000);
+    return { days, raw };
+  })();
 
   const isFigmaConnected = intState.figma && intState.figma.token && intState.figma.token !== '••••';
   const figFiles = (intState.figma?.fileKeys || []) as Array<{ key: string; name: string }>;
@@ -293,9 +302,20 @@ export function IntegrationsPage() {
             <span className="text-lg">🎨</span>
             <h3 className="text-base font-bold">피그마</h3>
           </div>
-          {isFigmaConnected
-            ? <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">연결됨</span>
-            : <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-500/10 text-text-secondary border border-border-color">미연결</span>}
+          <div className="flex items-center gap-2">
+            {isFigmaConnected && figDday && (
+              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${
+                figDday.days < 0 ? 'bg-red-500/10 text-red-500 border-red-500/25'
+                : figDday.days <= 7 ? 'bg-red-500/10 text-red-500 border-red-500/25'
+                : figDday.days <= 30 ? 'bg-amber-500/10 text-amber-600 border-amber-500/25'
+                : 'bg-gray-500/10 text-text-secondary border-border-color'}`}>
+                {figDday.days < 0 ? `만료됨 (${figDday.raw})` : `토큰 D-${figDday.days} · ${figDday.raw}`}
+              </span>
+            )}
+            {isFigmaConnected
+              ? <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">연결됨</span>
+              : <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-500/10 text-text-secondary border border-border-color">미연결</span>}
+          </div>
         </div>
 
         {!isFigmaConnected ? (
@@ -304,6 +324,9 @@ export function IntegrationsPage() {
               <input type="password" value={figToken} onChange={(e) => setFigToken(e.target.value)}
                 placeholder="figd_ 로 시작하는 개인 액세스 토큰"
                 className="flex-1 px-3 py-2 bg-background border border-border-color rounded-lg text-sm" />
+              <input type="date" value={figExpires} onChange={(e) => setFigExpires(e.target.value)}
+                title="토큰 만료일 (발급 화면에 표시됩니다)"
+                className="px-3 py-2 bg-background border border-border-color rounded-lg text-sm" />
               <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg"
                 disabled={saving === 'figma'} onClick={saveFigmaToken}>
                 {saving === 'figma' ? '저장 중...' : '저장'}
