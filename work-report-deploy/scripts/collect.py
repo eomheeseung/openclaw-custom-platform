@@ -266,36 +266,55 @@ def collect_drive(nn, date_from, date_to, member_email=None):
     return shared + personal[:DRIVE_MAX], True
 
 
+GH_API = "https://api.github.com"
+
+
+def _gh(url, token):
+    cmd = ["curl", "-s", "-m", "30", "-H", f"Authorization: Bearer {token}",
+           "-H", "Accept: application/vnd.github+json", url]
+    try:
+        return json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=45).stdout)
+    except Exception:
+        return None
+
+
 def collect_github(owner, date_from, date_to, token=None, author=None):
-    """본인 커밋 전역 검색 — 레포도 조직도 등록할 필요 없음.
-    실측(user02): 레포가 infconn/·eomheeseung/ 등 여러 조직에 흩어져 있어 org 고정은 부적합.
-    author(본인 username) 는 필수: 생략하면 공용 저장소의 팀원 커밋이 섞인다.
-    owner 는 선택 — 지정하면 그 조직으로 범위를 좁힌다."""
+    """접근 가능한 레포를 돌며 **모든 브랜치**에서 본인 커밋을 찾는다.
+
+    ⚠ `search/commits` 를 쓰면 안 된다 — 사내 레포는 전부 private 이라 검색에 잡히지 않고,
+    잡히더라도 기본 브랜치만 본다. 실측(user02): search 로 0건이었으나 실제로는
+    feature/v2·feature/redesign-ui 에 7건이 있었다.
+    """
     if not token:
         return [], True                 # 미설정 = 조회 안 함 (정상)
     if not author:
         return [], False                # 타인 커밋 오염 방지 — 실패로 드러냄
-    scope = f"org:{owner}+" if owner else ""
-    q = f"{scope}author:{author}+author-date:{date_from}..{date_to}"
-    cmd = (f'curl -s -m 30 -H "Authorization: Bearer {token}" '
-           f'-H "Accept: application/vnd.github+json" '
-           f'"https://api.github.com/search/commits?q={q}&per_page=50"')
-    try:
-        out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout
-        d = json.loads(out)
-        rows = d.get("items")
-        if not isinstance(rows, list):
-            return [], False
-    except Exception:
+    repos = _gh(f"{GH_API}/user/repos?sort=pushed&per_page=50"
+                "&affiliation=owner,collaborator,organization_member", token)
+    if not isinstance(repos, list):
         return [], False
-    items = []
-    for c in rows:
-        msg = (c.get("commit") or {}).get("message", "").split("\n")[0]
-        r = c.get("repository") or {}
-        repo = r.get("full_name") or r.get("name") or ""
-        items.append(normalize_item(
-            {"title": msg, "date": (c.get("commit") or {}).get("author", {}).get("date")},
-            "github", None, c.get("html_url"), "done", repo=repo))
+    since, until = f"{date_from}T00:00:00Z", f"{date_to}T23:59:59Z"
+    items, seen = [], set()
+    for r in repos:
+        # 보고 기간 이후로 한 번도 push 되지 않은 레포는 볼 필요가 없다 (호출 수 절약)
+        if (r.get("pushed_at") or "") < since:
+            continue
+        if owner and (r.get("owner") or {}).get("login") != owner:
+            continue
+        full = r.get("full_name")
+        branches = _gh(f"{GH_API}/repos/{full}/branches?per_page=30", token)
+        for b in branches if isinstance(branches, list) else []:
+            commits = _gh(f"{GH_API}/repos/{full}/commits?sha={b.get('name')}"
+                          f"&author={author}&since={since}&until={until}&per_page=50", token)
+            for c in commits if isinstance(commits, list) else []:
+                sha = c.get("sha")
+                if not sha or sha in seen:
+                    continue            # 브랜치가 겹치면 같은 커밋이 여러 번 잡힌다
+                seen.add(sha)
+                msg = (c.get("commit") or {}).get("message", "").split("\n")[0]
+                items.append(normalize_item(
+                    {"title": msg, "date": (c.get("commit") or {}).get("author", {}).get("date")},
+                    "github", None, c.get("html_url"), "done", repo=full))
     return items, True
 
 
