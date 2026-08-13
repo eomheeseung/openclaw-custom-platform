@@ -229,9 +229,32 @@ def _drive_call(payload):
 
 
 def drive_account(nn):
-    """본인 구글 계정. integrations.json 에는 없고 API 응답 `account` 로만 알 수 있다."""
-    d = _drive_call({"userNN": nn, "pageSize": 1})
-    return (d or {}).get("account")
+    """본인 구글 계정. integrations.json 에는 없고 API 응답 `account` 로만 알 수 있다.
+
+    한 번 알아내면 바뀌지 않으므로 config 에 캐시한다 — 매 수집마다 조회하면
+    그 호출이 실패하는 것만으로 드라이브 전체가 빠진다(실측: 같은 조건에서 간헐 실패).
+    """
+    cfg_path = f"{paths.data_dir(nn)}/work-report/config.json"
+    try:
+        cfg = json.load(open(cfg_path))
+    except Exception:
+        cfg = None
+    if cfg and cfg.get("drive_account"):
+        return cfg["drive_account"]
+    for _ in range(2):                      # 한 번은 재시도 — 간헐 실패가 관측된다
+        d = _drive_call({"userNN": nn, "pageSize": 1})
+        account = (d or {}).get("account")
+        if account:
+            if cfg is not None:
+                cfg["drive_account"] = account
+                try:
+                    tmp = f"{cfg_path}.tmp"
+                    json.dump(cfg, open(tmp, "w"), ensure_ascii=False, indent=2)
+                    os.replace(tmp, cfg_path)
+                except Exception:
+                    pass                    # 캐시 실패는 수집을 막지 않는다
+            return account
+    return None
 
 
 def collect_drive(nn, date_from, date_to, member_email=None):
@@ -243,8 +266,9 @@ def collect_drive(nn, date_from, date_to, member_email=None):
     member_email = member_email or drive_account(nn)
     if not member_email:
         return [], False              # 계정을 모르면 타인 파일이 섞인다 — 실패로 드러냄
-    d = _drive_call({"userNN": nn, "modifiedAfter": date_from, "modifiedBefore": date_to,
-                     "modifiedByEmail": member_email, "pageSize": 200})
+    payload = {"userNN": nn, "modifiedAfter": date_from, "modifiedBefore": date_to,
+               "modifiedByEmail": member_email, "pageSize": 200}
+    d = _drive_call(payload) or _drive_call(payload)      # 간헐 실패 대비 1회 재시도
     if not d:
         return [], False
     # 공유 드라이브 이름이 곧 사업명이다 (예: "금연서비스 통합정보시스템 위탁운영").
