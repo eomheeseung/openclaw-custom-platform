@@ -191,6 +191,7 @@ export function shouldHideMessage(role: string, rawContent: string): boolean {
 
   /* 3. assistant 메시지: raw 덤프 마커 / JSON 단독 응답 / BOOTSTRAP 누출 거름 */
   if (KIND_CARD_RE.test(c)) return false;        // 카드 묶음은 무조건 통과
+  if (CARD_FENCE_MARKERS.some(f => c.includes(f))) return false;   // 문장 뒤에 붙은 펜스도 카드다
   if (containsRawDumpMarker(c)) return true;
   if (/^HEARTBEAT(_[A-Z]+)?\b/i.test(c)) return true;
   if (c === 'Source: memory/' || /^Source: memory\//.test(c)) return true;

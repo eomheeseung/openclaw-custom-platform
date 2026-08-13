@@ -182,6 +182,31 @@ const KIND_CARDS = new Set([
   'draft-card', 'download-card', 'work-draft', 'tool-pick',
 ]);
 
+/* 모델이 ```work-draft 를 문장 뒤에 줄바꿈 없이 붙이는 회차가 있다(실측).
+   마크다운은 펜스가 줄 처음에 있어야 코드블록으로 보므로, 그대로 두면 JSON 이 글자로 쏟아진다.
+   본문 어디에 있든 펜스를 찾아 카드로 만든다. 닫는 펜스가 없어도(출력이 잘려도) 살린다. */
+const FENCE_RE = new RegExp(
+  '```(' + [...KIND_CARDS].join('|') + ')\\s*([\\s\\S]*?)(?:```|$)', 'g');
+
+function extractFencedCards(raw: string): Array<{ kind: string; data: unknown }> | null {
+  const out: Array<{ kind: string; data: unknown }> = [];
+  for (const m of raw.matchAll(FENCE_RE)) {
+    const body = (m[2] || '').trim();
+    if (!body) continue;
+    try {
+      out.push({ kind: m[1], data: JSON.parse(body) });
+    } catch {
+      /* 잘린 JSON 은 버린다 — 반쯤 그린 카드보다 원문이 낫다 */
+    }
+  }
+  return out.length ? out : null;
+}
+
+/** 본문에서 카드를 찾는다: 전체가 카드 묶음이거나, 문장 사이에 펜스로 들어 있거나. */
+function findCards(raw: string): Array<{ kind: string; data: unknown }> | null {
+  return parseKindCards(raw) || extractFencedCards(raw);
+}
+
 function parseKindCards(raw: string): Array<{ kind: string; data: unknown }> | null {
   try {
     /* ```json 펜스가 붙어 오기도, 맨 JSON 으로 오기도 한다(실측 둘 다) */
@@ -327,11 +352,11 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
           /* 같은 종류 카드가 여러 번 나오면(초안 생성 직후 + 다듬기 후) 마지막 것만 보여준다.
              둘 다 보이면 다듬기 전 문구가 함께 남아 헷갈린다. */
           const cardKindsHere = new Set(
-            (parseKindCards(cleanDisplayContent(message.content || '')) || []).map(c => c.kind));
+            (findCards(cleanDisplayContent(message.content || '')) || []).map(c => c.kind));
           const supersededKinds = new Set<string>();
           if (cardKindsHere.size) {
             for (let k = idx + 1; k < filtered.length; k++) {
-              const later = parseKindCards(cleanDisplayContent(filtered[k].content || '')) || [];
+              const later = findCards(cleanDisplayContent(filtered[k].content || '')) || [];
               for (const c of later) if (cardKindsHere.has(c.kind)) supersededKinds.add(c.kind);
             }
           }
@@ -450,11 +475,11 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
                         ? 'bg-purple-50/60 border border-purple-200 border-l-4 border-l-purple-500 px-4 py-3 rounded-tl-md shadow-sm'
                         : 'bg-white border border-black/[0.05] px-4 py-3 rounded-tl-md shadow-sm'
                   }`}>
-                    {!isUser && parseKindCards(cleanDisplayContent(message.content || '')) ? (
+                    {!isUser && findCards(cleanDisplayContent(message.content || '')) ? (
                       /* 본문 전체가 카드 묶음인 회차 — 코드블록이 아니라 pre 핸들러를 타지 않는다.
                          모델이 ```json 없이 맨 JSON 으로 내보내는 경우가 있다(실측). */
                       <div className="space-y-2">
-                        {parseKindCards(cleanDisplayContent(message.content || ''))!.map((c, i) => (
+                        {findCards(cleanDisplayContent(message.content || ''))!.map((c, i) => (
                           <div key={`${message.id}-kc-${i}`}>
                             {renderKindCardTop(c.kind, JSON.stringify(c.data), message.id, i)}
                           </div>
