@@ -517,7 +517,7 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
                         </ReactMarkdown>
                       </div>
                     ) : (
-                      <p className="whitespace-pre-wrap leading-relaxed">{stripBootstrapPending(stripCronPrefix(trimFileContent(message.content)))}</p>
+                      <p className="whitespace-pre-wrap leading-relaxed">{cleanDisplayContent(stripBootstrapPending(stripCronPrefix(trimFileContent(message.content))))}</p>
                     )}
                   </div>
 

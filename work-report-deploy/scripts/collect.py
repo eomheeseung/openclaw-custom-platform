@@ -140,10 +140,39 @@ def collect_dooray(date_from, date_to, member_id=None):
     return items, ok_all
 
 
-def collect_gmail(date_from, date_to):
+# 보고 가치가 없는 메일 — 다듬기(LLM)에 맡기면 그 단계를 건너뛰는 회차가 있어(실측)
+# 명백한 것은 수집 단계에서 규칙으로 거른다.
+RE_AD_SUBJECT = re.compile(
+    r"\(광고\)|\[광고\]|광고\s*문의|무료\s*체험|웨비나|세미나\s*안내|뉴스레터|구독|"
+    r"이벤트\s*안내|할인|특가|프로모션|초대합니다|신청하세요|마감\s*임박", re.I)
+RE_AD_SENDER = re.compile(
+    r"no-?reply|noreply|newsletter|mailer|marketing|ad@|edu@|support@|info@|"
+    r"news@|promo|notification", re.I)
+# 타인의 결재/회람 — 내 업무가 아니다 (본인 건은 이름으로 걸러 남긴다)
+RE_APPROVAL = re.compile(r"결재|회람|기안|전자결재|docswave", re.I)
+# 캘린더 잡음 — 장소·상태만 적어둔 일정
+RE_CAL_NOISE = re.compile(r"^(사무실|재택|외근|출장|휴가|연차|반차|점심|회의실\s*\S*)$")
+
+
+def is_ad_mail(subject, sender):
+    return bool(RE_AD_SUBJECT.search(subject or "") or RE_AD_SENDER.search(sender or ""))
+
+
+def is_others_approval(subject, member_name):
+    """결재/회람 메일 중 **내 이름이 없는 것** — 남의 문서다."""
+    if not RE_APPROVAL.search(subject or ""):
+        return False
+    return not (member_name and member_name in (subject or ""))
+
+
+def collect_gmail(date_from, date_to, member_name=None):
     ok, d = _run(f'gog mail search "after:{date_from} before:{date_to}" --max 50')
     items = []
     for m in d.get("messages", []):
+        subject = m.get("subject") or ""
+        sender = m.get("from") or ""
+        if is_ad_mail(subject, sender) or is_others_approval(subject, member_name):
+            continue
         url = f"https://mail.google.com/mail/u/0/#all/{m.get('id')}"
         items.append(normalize_item(m, "gmail", None, url, "done"))
     return items, ok
@@ -156,6 +185,8 @@ def collect_calendar(days=7, date_from=None, date_to=None):
         it = normalize_item(e, "calendar", None, e.get("htmlLink"), "done")
         if date_from and not in_period(it["at"], date_from, date_to):
             continue
+        if RE_CAL_NOISE.match((it.get("text") or "").strip()):
+            continue          # "사무실" 처럼 장소만 적어둔 일정은 업무가 아니다
         items.append(it)
     return items, ok
 
@@ -280,7 +311,7 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
     if tool_enabled(tools, "dooray"):
         take("dooray", *collect_dooray(date_from, date_to, member_id))
     if tool_enabled(tools, "gmail"):
-        take("gmail", *collect_gmail(date_from, date_to))
+        take("gmail", *collect_gmail(date_from, date_to, figma_name))
     if tool_enabled(tools, "calendar"):
         take("calendar", *collect_calendar(7, date_from, date_to))
     if tool_enabled(tools, "drive"):

@@ -74,3 +74,21 @@ def test_clean_title_uses_tag_when_title_is_all_tags():
     from collect import clean_title
     assert clean_title("Fwd: [주간업무보고 회의록][2026-08-10]") == "주간업무보고 회의록"
     assert clean_title("[주간보고][2026-08-10~2026-08-14]") == "주간보고"
+
+
+def test_filters_ad_and_others_approval():
+    """다듬기(LLM)를 건너뛰는 회차가 있어 명백한 노이즈는 수집에서 거른다"""
+    from collect import is_ad_mail, is_others_approval
+    assert is_ad_mail("(광고) 기업AX 사례", "edu@ablearn.kr") is True
+    assert is_ad_mail("2026 혁신의숲 어워드 후보 공개", "support@innoforest.co.kr") is True
+    assert is_ad_mail("주간업무보고 회의록", "da0ab@tideflo.com") is False
+    assert is_others_approval("[Docswave] [결재] 연차신청서-서완덕", "손재민") is True
+    assert is_others_approval("[Docswave] [결재] 연차신청서-손재민", "손재민") is False
+    assert is_others_approval("주간업무보고 회의록", "손재민") is False
+
+
+def test_filters_place_only_calendar():
+    from collect import RE_CAL_NOISE
+    assert RE_CAL_NOISE.match("사무실")
+    assert RE_CAL_NOISE.match("재택")
+    assert not RE_CAL_NOISE.match("주간업무보고 회의")

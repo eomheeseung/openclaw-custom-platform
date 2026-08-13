@@ -104,9 +104,8 @@ if __name__ == "__main__":
     try:
         fixed = verify(sys.argv[1], sys.argv[2])
         print(json.dumps({"ok": True, "fixed": len(fixed), "items": fixed}, ensure_ascii=False))
-        # 다듬기 뒤 최종 카드 — 화면은 마지막 카드를 최신으로 본다
-        path = f"{paths.data_dir(sys.argv[1])}/work-report/drafts/draft-{sys.argv[2]}.json"
-        print(f"```work-draft\n{json.dumps(json.load(open(path)), ensure_ascii=False, indent=2)}\n```")
+        # 카드는 build_draft 가 낸다 — 여기서도 내면 화면에 카드가 두 개 뜬다.
+        # 다듬기로 내용이 바뀌었으면 사용자가 대화로 다시 요청하면 된다.
     except Exception as e:
         print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         sys.exit(1)

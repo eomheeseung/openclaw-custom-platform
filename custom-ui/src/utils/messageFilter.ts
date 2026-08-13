@@ -244,6 +244,9 @@ export function cleanDisplayContent(content: string): string {
     /* 두레이 데몬이 메시지에 함께 싣는 회신 지시 — 사용자에게 보일 내용이 아니다.
        BOOTSTRAP 은 세션 첫 턴에만 읽혀서 지시를 본문에 동봉할 수밖에 없다. */
     .replace(/\n*↳ 두레이에서 온 요청이다[\s\S]*$/g, '')
+    /* 스크립트 실행 결과의 부산물 — 카드만 보이면 된다 */
+    .replace(/^\s*\{"ok":\s*(?:true|false)[^\n]*\}\s*$/gm, '')
+    .replace(/^\s*Process exited with code \d+\.\s*$/gm, '')
     .replace(/```json\s*\{\s*"status"\s*:\s*"accepted"[\s\S]*?"modelApplied":\s*true\s*\}\s*```/g, '')
     .replace(/\{\s*"status"\s*:\s*"accepted"[\s\S]*?"modelApplied":\s*true\s*\}/g, '')
     .replace(/\n?Source: memory\/[^\n]*/g, '')
