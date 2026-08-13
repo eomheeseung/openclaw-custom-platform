@@ -19,6 +19,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
+from week_util import next_week_range
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 
@@ -157,6 +158,8 @@ RE_AD_SENDER = re.compile(
 RE_APPROVAL = re.compile(r"결재|회람|기안|전자결재|docswave", re.I)
 # 캘린더 잡음 — 장소·상태만 적어둔 일정
 RE_CAL_NOISE = re.compile(r"^(사무실|재택|외근|출장|휴가|연차|반차|점심|회의실\s*\S*)$")
+# 휴가·연차는 제목이 길어도(예: "[손재민] 연차신청서 - 오후 반차 휴가") 업무가 아니다
+RE_CAL_LEAVE = re.compile(r"연차|반차|병가|경조휴가|휴가\s*(신청|원)")
 
 
 def is_ad_mail(subject, sender):
@@ -186,7 +189,7 @@ def collect_gmail(date_from, date_to, member_name=None):
 CALENDAR_API = "http://172.18.0.1:18799/api/calendar/search"
 
 
-def collect_calendar(nn, date_from, date_to):
+def collect_calendar(nn, date_from, date_to, status="done"):
     """기간 지정 조회 API 로 본인 일정을 가져온다.
 
     ⚠ `gog calendar list [일수]` 를 쓰면 안 된다 — **미래만** 본다(음수 무효, search 도 미래 30일).
@@ -205,10 +208,10 @@ def collect_calendar(nn, date_from, date_to):
     items = []
     for e in d.get("events", []):
         title = (e.get("title") or "").strip()
-        if not title or RE_CAL_NOISE.match(title):
-            continue          # "사무실" 처럼 장소만 적어둔 일정은 업무가 아니다
+        if not title or RE_CAL_NOISE.match(title) or RE_CAL_LEAVE.search(title):
+            continue          # "사무실" 처럼 장소만 적어둔 일정·휴가는 업무가 아니다
         items.append(normalize_item(
-            {"title": title, "date": e.get("start")}, "calendar", None, e.get("htmlLink"), "done"))
+            {"title": title, "date": e.get("start")}, "calendar", None, e.get("htmlLink"), status))
     return items, True
 
 
@@ -416,6 +419,14 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
         take("gmail", *collect_gmail(date_from, date_to, figma_name))
     if tool_enabled(tools, "calendar"):
         take("calendar", *collect_calendar(nn, date_from, date_to))
+        # 다음 주 일정 = 차주 계획. 이걸 안 넣으면 '진행·차주' 가 거의 비어서
+        # 사용자가 매주 손으로 채워야 한다(실측: 캘린더에 잡아둔 다음 주 미팅이 안 들어옴).
+        nf, nt = next_week_range(date_from)
+        got, ok = collect_calendar(nn, nf, nt, status="next")
+        items.extend(got)
+        stats["calendar"] = stats.get("calendar", 0) + len(got)
+        if not ok and "calendar" not in failures:
+            failures.append("calendar")
     if tool_enabled(tools, "drive"):
         take("drive", *collect_drive(nn, date_from, date_to, member_email))
     if tool_enabled(tools, "github"):

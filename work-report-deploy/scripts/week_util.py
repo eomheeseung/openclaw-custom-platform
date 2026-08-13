@@ -12,3 +12,10 @@ def prev_week_label(date_iso):
     d = date.fromisoformat(date_iso) - timedelta(days=7)
     y, w, _ = d.isocalendar()
     return f"{y}-W{w:02d}"
+
+
+def next_week_range(date_iso):
+    """다음 주 월~금. 캘린더에 잡힌 다음 주 일정 = 차주 계획."""
+    d = date.fromisoformat(date_iso)
+    mon = d - timedelta(days=d.weekday()) + timedelta(days=7)
+    return mon.strftime("%Y-%m-%d"), (mon + timedelta(days=4)).strftime("%Y-%m-%d")
