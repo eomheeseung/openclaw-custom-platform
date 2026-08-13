@@ -173,7 +173,11 @@ if __name__ == "__main__":
         print(json.dumps({"ok": True, "path": path, "week": d["week"], "total": total,
                           "stats": d["stats"], "failures": d["failures"],
                           "warnings": len(d["warnings"])}, ensure_ascii=False))
-        # 카드는 finish.py 가 낸다 — 여기서 내면 다듬기 전(파일명·원문 그대로)이 박힌다(실측).
+        # 카드를 여기서도 낸다 — 모델이 마지막 단계(finish.py)를 건너뛰는 회차가 잦아
+        # 여기서 안 내면 카드가 아예 안 나온다(실측 반복). 다듬기 뒤 finish.py 가
+        # 갱신 카드를 다시 내므로, 화면에는 정리된 쪽이 아래에 남는다.
+        # 명백한 노이즈(광고·타인 결재·장소 일정)는 수집에서 이미 걸렀다.
+        print(f"```work-draft\n{json.dumps(d, ensure_ascii=False, indent=2)}\n```")
     except Exception as e:
         run_log.record(nn, ok=False, error=str(e))
         print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
