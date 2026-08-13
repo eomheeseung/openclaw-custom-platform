@@ -1009,6 +1009,9 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
       .then((res) => {
         const payload = (res as { payload?: Record<string, unknown> }).payload;
         {
+          /* 잘려서 카드로 인식되지 않는 메시지는 아래 필터에서 버려진다.
+             버리기 전에 "카드가 있던 자리인지" 만 기억해 둔다. */
+          let hadDraftCard = false;
           const historyMessages = ((payload?.messages || []) as Array<{
             role: string;
             content: Array<{ type: string; text?: string }> | string;
@@ -1017,6 +1020,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
             let text = '';
             if (typeof m.content === 'string') text = m.content;
             else if (Array.isArray(m.content)) text = m.content.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
+            if (text.includes('```work-draft')) hadDraftCard = true;
             return {
               id: `hist-${idx}`,
               role: m.role as 'user' | 'assistant' | 'system',
@@ -1052,8 +1056,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           /* 초안 카드는 기록에서 잘려 온다 — 게이트웨이가 메시지 하나를 8,000자로 자르는데
              카드 JSON 은 9~23KB 다. 잘린 JSON 은 파싱이 안 돼 카드가 사라진다(실측:
              페이지를 나갔다 오면 없어짐). 카드가 있던 자리면 초안을 다시 받아 그린다. */
-          if (/^agent:work-report:/.test(sessionKey)
-              && merged.some(m => (m.content || '').includes('```work-draft'))) {
+          if (/^agent:work-report:/.test(sessionKey) && hadDraftCard) {
             fetch(`/api/work-report/draft${draftQuery()}`, { credentials: 'include' })
               .then(r => r.json())
               .then(j => {
