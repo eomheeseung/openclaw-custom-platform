@@ -324,7 +324,20 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
             onSendMessage?.(agentId && !text.trimStart().startsWith('@') ? `@${agentId} ${text}` : text);
           };
 
+          /* 같은 종류 카드가 여러 번 나오면(초안 생성 직후 + 다듬기 후) 마지막 것만 보여준다.
+             둘 다 보이면 다듬기 전 문구가 함께 남아 헷갈린다. */
+          const cardKindsHere = new Set(
+            (parseKindCards(cleanDisplayContent(message.content || '')) || []).map(c => c.kind));
+          const supersededKinds = new Set<string>();
+          if (cardKindsHere.size) {
+            for (let k = idx + 1; k < filtered.length; k++) {
+              const later = parseKindCards(cleanDisplayContent(filtered[k].content || '')) || [];
+              for (const c of later) if (cardKindsHere.has(c.kind)) supersededKinds.add(c.kind);
+            }
+          }
+
           const renderKindCardTop = (kind: string, data: string, mid: string, i: number) => {
+            if (supersededKinds.has(kind)) return null;   // 뒤에 같은 카드가 또 있으면 이건 옛 것
             if (kind === 'biz-picker')      return <BizPickerCard raw={data} onSelect={sendKeepingAgent} onIntentPick={onIntentPick} />;
             if (kind === 'sr-table')         return <SrTableCard raw={data} />;
             if (kind === 'week-picker')      return <WeekPickerCard raw={data} onSelect={sendKeepingAgent} />;

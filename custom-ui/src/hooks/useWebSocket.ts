@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ConnectionStatus, Agent, Session, ProtocolFrame } from '../types';
 import { shouldHideMessage } from '../utils/messageFilter';
 import { resolveAgentFor } from '../utils/agentRouting';
+import { FINISH_HINT } from '../utils/messageFilter';
 
 interface UseWebSocketProps {
   url: string;
@@ -773,6 +774,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
         setCurrentSession(activeSessionKey);
       }
     }
+
     if (!activeSessionKey) {
       // 첫 메시지 발신 시 — selectedAgent의 id 기반 새 세션 자동 생성
       // (selectedAgent는 외부 prop이므로 fallback으로 'main' 유지)
@@ -885,6 +887,14 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     }
 
     // Send message with attachments parameter (not in message field)
+    /* 보고 담당에게 보낼 때는 마무리 지시를 함께 싣는다.
+       두레이는 데몬이 같은 지시를 붙여 카드가 잘 나오는데, 웹은 그게 없어
+       모델이 마지막 단계(카드 출력)를 자주 건너뛰었다(실측). 화면에서는 숨긴다. */
+    const routedId = autoAgent?.id || mentionTargetId;
+    if (routedId === 'work-report' || routedId === 'business-report') {
+      finalMessage = `${finalMessage}\n\n${FINISH_HINT}`;
+    }
+
     const messagePayload: Record<string, unknown> = { sessionKey, message: finalMessage || '', idempotencyKey };
     if (apiAttachments.length > 0) {
       messagePayload.attachments = apiAttachments;
