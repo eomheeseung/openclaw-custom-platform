@@ -173,11 +173,8 @@ if __name__ == "__main__":
         print(json.dumps({"ok": True, "path": path, "week": d["week"], "total": total,
                           "stats": d["stats"], "failures": d["failures"],
                           "warnings": len(d["warnings"])}, ensure_ascii=False))
-        # 카드를 여기서도 낸다 — 모델이 마지막 단계(finish.py)를 건너뛰는 회차가 잦아
-        # 여기서 안 내면 카드가 아예 안 나온다(실측 반복). 다듬기 뒤 finish.py 가
-        # 갱신 카드를 다시 내므로, 화면에는 정리된 쪽이 아래에 남는다.
-        # 명백한 노이즈(광고·타인 결재·장소 일정)는 수집에서 이미 걸렀다.
-        print(f"```work-draft\n{json.dumps(d, ensure_ascii=False, indent=2)}\n```")
+        # 카드는 finish.py 만 낸다 — 여기서도 내면 다듬기 전/후 카드가 두 번 그려진다.
+        # (SOUL 을 명령 중심으로 줄인 뒤 마지막 단계를 건너뛰지 않는 것을 확인했다)
     except Exception as e:
         run_log.record(nn, ok=False, error=str(e))
         print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
