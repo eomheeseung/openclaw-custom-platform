@@ -26,6 +26,15 @@ const TOOL_KO: Record<string, string> = {
   drive: '드라이브', github: 'GitHub', figma: 'Figma', carry: '이월',
 };
 
+/* 브라우저는 nginx 를 거쳐 오므로 서버가 IP 로 사용자를 알아내지 못한다 —
+   다른 화면들과 같이 주소의 token 에서 뽑아 명시적으로 넘긴다(없으면 403). */
+function userNNParam(): string {
+  const t = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('token') || '' : '';
+  const m = t.match(/user(\d+)/i);
+  return m ? `&userNN=${m[1].padStart(2, '0')}` : '';
+}
+
 /** 사업 인덱스: -1 = 공통(사업 없음), -2 = AI 활용 */
 const COMMON = -1;
 const AI = -2;
@@ -88,24 +97,27 @@ function Row({
       </span>
 
       {editable && (
-        <span className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
           {refr.gi !== AI && (
             <>
               <select value={refr.gi} onChange={e => onBiz(refr, Number(e.target.value))}
-                className="text-[10px] bg-transparent border border-border-color rounded px-1 py-0.5 text-text-secondary"
+                className="text-xs bg-white border border-border-color rounded px-1.5 py-1 text-text-secondary
+                           hover:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 title="사업 바꾸기">
                 <option value={COMMON}>(사업 없음)</option>
                 {bizList.map(b => <option key={b.gi} value={b.gi}>{b.alias}</option>)}
               </select>
               <button onClick={() => onStatus(refr, it.status === 'done' ? 'next' : 'done')}
-                className="text-[10px] px-1.5 py-0.5 border border-border-color rounded text-text-secondary hover:border-accent hover:text-accent"
+                className="text-xs px-2 py-1 border border-border-color rounded text-text-secondary
+                           hover:border-accent hover:text-accent whitespace-nowrap"
                 title="완료 ↔ 진행·차주 옮기기">
                 {it.status === 'done' ? '→ 진행' : '→ 완료'}
               </button>
             </>
           )}
-          <button onClick={() => onRemove(refr)} className="p-0.5 text-text-secondary hover:text-red-500" title="삭제">
-            <X className="w-3.5 h-3.5" />
+          <button onClick={() => onRemove(refr)}
+            className="p-1 rounded text-text-secondary hover:text-red-500 hover:bg-red-500/10" title="삭제">
+            <X className="w-4 h-4" />
           </button>
         </span>
       )}
@@ -140,8 +152,8 @@ function AddRow({ label, onAdd }: { label: string; onAdd: (text: string) => void
   if (!open) {
     return (
       <button onClick={() => setOpen(true)}
-        className="mx-5 mt-1 px-2 py-1 text-[11px] text-text-secondary hover:text-accent flex items-center gap-1">
-        <Plus className="w-3 h-3" /> {label}
+        className="mx-5 mt-1 px-2 py-1 text-xs text-text-secondary hover:text-accent flex items-center gap-1">
+        <Plus className="w-3.5 h-3.5" /> {label}
       </button>
     );
   }
@@ -187,7 +199,7 @@ export const WorkDraftCard = memo(function WorkDraftCard({
   useEffect(() => {
     if (!week || loadedFor.current === week) return;
     loadedFor.current = week;
-    fetch(`/api/work-report/draft?week=${encodeURIComponent(week)}`, { credentials: 'include' })
+    fetch(`/api/work-report/draft?week=${encodeURIComponent(week)}${userNNParam()}`, { credentials: 'include' })
       .then(r => r.json())
       .then(j => { if (j?.ok && j.draft) setD(j.draft); })
       .catch(() => { /* 없으면 대화에 박힌 값 그대로 */ });
@@ -198,7 +210,7 @@ export const WorkDraftCard = memo(function WorkDraftCard({
     if (timer.current) clearTimeout(timer.current);
     setSave('saving');
     timer.current = setTimeout(() => {
-      fetch(`/api/work-report/draft?week=${encodeURIComponent(week)}`, {
+      fetch(`/api/work-report/draft?week=${encodeURIComponent(week)}${userNNParam()}`, {
         method: 'PUT', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ businesses: next.businesses, common: next.common, ai: next.ai || [] }),
