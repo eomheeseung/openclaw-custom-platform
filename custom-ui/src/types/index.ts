@@ -22,7 +22,8 @@ export interface Session {
 
 export interface Message {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  /* toolResult — 도구 출력. 카드가 여기 실려 온다 (저장된 세션도 같은 role 을 쓴다) */
+  role: 'user' | 'assistant' | 'system' | 'toolResult';
   content: string;
   timestamp: Date;
   attachments?: Attachment[];

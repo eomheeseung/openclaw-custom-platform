@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ConnectionStatus, Agent, Session, ProtocolFrame } from '../types';
 import { shouldHideMessage } from '../utils/messageFilter';
 import { resolveAgentFor } from '../utils/agentRouting';
-import { FINISH_HINT, isConfirmRequest } from '../utils/messageFilter';
+import { FINISH_HINT, isConfirmRequest, looksLikeRenderableCard } from '../utils/messageFilter';
 
 interface UseWebSocketProps {
   url: string;
@@ -539,6 +539,28 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
 
     // 내부 도구는 카드에서 제외 (위임 뱃지로 대체 표시)
     const HIDDEN_TOOLS = new Set(['sessions_spawn', 'sessions_yield', 'sessions_continue', 'sessions_complete', 'sessions_resume']);
+
+    /* 도구 출력에 카드가 들어 있으면 그 자리에 꽂는다.
+       start/end 만 처리하고 있었는데, 실제 출력은 phase='result' 에만 실려 온다.
+       그래서 카드가 대화가 끝난 뒤 **새로고침해야** 보였다(실측). 저장된 세션에는
+       toolResult 로 남아 있으므로 히스토리에서는 잘 나왔던 것. */
+    if (phase === 'result' && !HIDDEN_TOOLS.has(toolName)) {
+      const raw = data.result;
+      const text = typeof raw === 'string' ? raw
+        : Array.isArray(raw)
+          ? raw.map(b => (b as { text?: string })?.text || '').join('')
+          : ((raw as { content?: Array<{ text?: string }> } | undefined)?.content || [])
+              .map(b => b?.text || '').join('');
+      if (text && looksLikeRenderableCard(text)) {
+        const msgId = `toolres-${data.toolCallId || data.toolUseId || `${runId}-${Date.now()}`}`;
+        setMessages(prev => prev.some(m => m.id === msgId) ? prev : [...prev, {
+          id: msgId,
+          role: 'toolResult' as const,
+          content: text,
+          timestamp: new Date(),
+        }]);
+      }
+    }
 
     // 일반 도구 호출 표시 (내부 도구 제외)
     if (toolName && !HIDDEN_TOOLS.has(toolName) && phase === 'start') {
