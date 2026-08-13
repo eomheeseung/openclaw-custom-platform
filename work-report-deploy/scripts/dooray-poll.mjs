@@ -307,6 +307,11 @@ async function pollUser(u, state) {
         // 응답이 끝난 지금이 이름표를 붙일 때다
         const ok = await labelSession(u.nn, state.pendingLabel.key, state.pendingLabel.label);
         log(`user${u.nn} 이름표 ${ok ? "적용" : "실패"}: ${state.pendingLabel.label}`);
+        if (ok) {
+          const map = state.labeledKeys || {};
+          map[state.pendingLabel.key] = true;
+          state.labeledKeys = map;
+        }
         state.pendingLabel = null;
       }
     } else if (Date.now() - state.pending.at > REPLY_TIMEOUT_MS) {
@@ -322,17 +327,23 @@ async function pollUser(u, state) {
     state.lastActiveAt = Date.now();
     const week0 = isoWeek();
     const matched0 = resolveAgent(u.nn, text);
-    let key0 = state.sessionKey;
-    let label0 = null;
-    if (matched0 || !key0) {
-      const agentId = matched0 || "secretary";
-      const now = new Date();
-      key0 = sessionKeyFor(week0, agentId, `${now.getHours()}${String(now.getMinutes()).padStart(2, "0")}`);
-      label0 = sessionLabelWith(agentDisplayName(u.nn, agentId), now);
-      state.sessionKey = key0;
-      state.pendingLabel = { key: key0, label: label0 };   // 응답이 끝난 뒤에 붙인다
-      log(`user${u.nn} → ${agentId} 새 대화 (${key0.split(":").pop()})`);
+    /* 담당 이름이 있으면 그 담당과의 새 대화, 없으면 **주간 통합 대화(비서)**.
+       이름 없는 말을 직전 담당에게 붙였더니 "오늘 날씨" 를 사업 주간보고가 답했다(실측).
+       후속인지 새 주제인지 가릴 신호가 없다 — 두레이 API 에 답장 정보가 없고,
+       시간으로 추측하면 응답 직후의 잡담을 못 거른다. 그래서 사용자가 이름으로 알려주는 방식이다. */
+    let key0, label0 = null;
+    const now = new Date();
+    if (matched0) {
+      key0 = sessionKeyFor(week0, matched0, `${now.getHours()}${String(now.getMinutes()).padStart(2, "0")}`);
+      label0 = sessionLabelWith(agentDisplayName(u.nn, matched0), now);
+      log(`user${u.nn} → ${matched0} 새 대화 (${key0.split(":").pop()})`);
+    } else {
+      key0 = `agent:secretary:dooray-${week0}`;      // 주차마다 하나 — 잡담이 쌓이는 곳
+      label0 = `두레이 대화 · ${week0}`;
     }
+    const labeled = state.labeledKeys || {};
+    if (labeled[key0]) label0 = null;                 // 이름표는 세션마다 한 번
+    if (label0) state.pendingLabel = { key: key0, label: label0 };   // 응답이 끝난 뒤에 붙인다
     // 회신 지시를 메시지에 함께 싣는다 — BOOTSTRAP 은 세션 첫 턴에만 읽히므로
     // 이미 진행 중인 세션에는 새 규칙이 반영되지 않는다(실측: 회신 누락).
     const body = [
@@ -342,10 +353,12 @@ async function pollUser(u, state) {
       `   exec: python3 /home/node/documents/work-report/scripts/notify.py ${u.nn} "3줄 이내 요약"`,
       `   카드(work-draft 등)는 두레이로 보내지 마. 대신 이 링크를 회신에 그대로 붙여라:`,
       `   ${webLink(u.nn, key0)}`,
+      ...(matched0
+        ? [`   회신 끝에 이 안내를 그대로 덧붙여라: "이어서 고치시려면 앞에 «${agentDisplayName(u.nn, matched0)}» 를 붙여주세요."`]
+        : []),
     ].join("\n");
     const ok = await sendToSession(u.nn, body, key0, null);
     if (!ok) {
-      state.sessionKey = null;          // 실패한 세션을 붙들고 있지 않는다
       await sayToDooray(u.nn, "요청을 전달하지 못했습니다. 잠시 후 다시 «..» 로 보내주시거나 "
         + `웹에서 확인해주세요 → ${webLink(u.nn, key0)}`);
     } else {
