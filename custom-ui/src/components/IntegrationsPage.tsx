@@ -13,6 +13,9 @@ export function IntegrationsPage() {
   const [ghRepo, setGhRepo] = useState('');
   const [ghUsername, setGhUsername] = useState('');
   const [saving, setSaving] = useState('');
+  const [figToken, setFigToken] = useState('');
+  const [figUrls, setFigUrls] = useState('');
+  const [figMsg, setFigMsg] = useState('');
 
   const loadInt = useCallback(async () => {
     try {
@@ -77,6 +80,56 @@ export function IntegrationsPage() {
       if (d.ok) await loadInt(); else alert('실패: ' + (d.error || ''));
     } catch (err: any) { alert('오류: ' + err.message); } finally { setSaving(''); }
   };
+
+  const saveFigmaToken = async () => {
+    if (!figToken.trim()) { alert('토큰을 입력해주세요'); return; }
+    setSaving('figma');
+    try {
+      await fetch('/api/integrations/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ figma: { token: figToken.trim() }, userNN: getUserNN() }),
+      });
+      setFigToken(''); await loadInt();
+    } finally { setSaving(''); }
+  };
+
+  /* URL 을 붙여넣으면 서버가 파일 키를 뽑고 이름을 조회한다.
+     피그마는 사용자 기준 파일 목록 API 가 없어(명세 확인) 개별 등록 외에는 방법이 없다. */
+  const addFigmaFiles = async () => {
+    if (!figUrls.trim()) return;
+    setSaving('figma-files'); setFigMsg('');
+    try {
+      const r = await fetch('/api/figma/resolve', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: figUrls, userNN: getUserNN() }),
+      });
+      const d = await r.json();
+      if (!d.ok) { setFigMsg(d.error || '실패'); return; }
+      const found = (d.files || []).filter((f: any) => f.ok);
+      const prev = (intState.figma?.fileKeys || []) as Array<{ key: string; name: string }>;
+      const merged = [...prev];
+      for (const f of found) if (!merged.some(x => x.key === f.key)) merged.push({ key: f.key, name: f.name });
+      await fetch('/api/integrations/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ figma: { fileKeys: merged }, userNN: getUserNN() }),
+      });
+      setFigUrls('');
+      setFigMsg(found.length ? `${found.length}개 등록했어요` : '파일을 찾지 못했어요');
+      await loadInt();
+    } finally { setSaving(''); }
+  };
+
+  const removeFigmaFile = async (key: string) => {
+    const prev = (intState.figma?.fileKeys || []) as Array<{ key: string; name: string }>;
+    await fetch('/api/integrations/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ figma: { fileKeys: prev.filter(x => x.key !== key) }, userNN: getUserNN() }),
+    });
+    await loadInt();
+  };
+
+  const isFigmaConnected = intState.figma && intState.figma.token && intState.figma.token !== '••••';
+  const figFiles = (intState.figma?.fileKeys || []) as Array<{ key: string; name: string }>;
 
   const isDoorayConnected = intState.dooray && intState.dooray.token && intState.dooray.token !== '••••';
   const isGithubConnected = intState.github && intState.github.token && intState.github.token !== '••••';
@@ -232,6 +285,71 @@ export function IntegrationsPage() {
           </div>
         </div>
       )}
+
+      {/* ═══ 피그마 ═══ */}
+      <div className="bg-card border border-border-color rounded-xl p-5 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🎨</span>
+            <h3 className="text-base font-bold">피그마</h3>
+          </div>
+          {isFigmaConnected
+            ? <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">연결됨</span>
+            : <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-500/10 text-text-secondary border border-border-color">미연결</span>}
+        </div>
+
+        {!isFigmaConnected ? (
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input type="password" value={figToken} onChange={(e) => setFigToken(e.target.value)}
+                placeholder="figd_ 로 시작하는 개인 액세스 토큰"
+                className="flex-1 px-3 py-2 bg-background border border-border-color rounded-lg text-sm" />
+              <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg"
+                disabled={saving === 'figma'} onClick={saveFigmaToken}>
+                {saving === 'figma' ? '저장 중...' : '저장'}
+              </button>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              피그마 → Settings → Security → Personal access tokens → Generate new token<br />
+              권한은 <span className="font-mono">current_user:read</span>, <span className="font-mono">file_metadata:read</span>,
+              {' '}<span className="font-mono">file_versions:read</span> 세 가지면 됩니다. 만료는 최대 90일입니다.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-semibold text-text-secondary mb-1.5">작업 파일 등록</div>
+              <textarea value={figUrls} onChange={(e) => setFigUrls(e.target.value)} rows={3}
+                placeholder={'피그마 파일 주소를 붙여넣으세요 (여러 줄 가능)\nhttps://www.figma.com/design/.../파일명'}
+                className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm font-mono" />
+              <div className="flex items-center gap-2 mt-2">
+                <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg"
+                  disabled={saving === 'figma-files'} onClick={addFigmaFiles}>
+                  {saving === 'figma-files' ? '확인 중...' : '추가'}
+                </button>
+                {figMsg && <span className="text-xs text-text-secondary">{figMsg}</span>}
+              </div>
+              <p className="text-xs text-text-secondary mt-1.5">
+                주소 안의 <span className="font-mono">node-id</span> 는 신경 쓰지 않아도 됩니다 — 같은 파일이면 하나로 묶입니다.
+              </p>
+            </div>
+
+            {figFiles.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-text-secondary mb-1.5">등록된 파일 {figFiles.length}개</div>
+                <div className="space-y-1">
+                  {figFiles.map(f => (
+                    <div key={f.key} className="flex items-center justify-between bg-background rounded-lg px-3 py-2">
+                      <span className="text-sm">{f.name}</span>
+                      <button className="text-xs text-red-500 hover:underline" onClick={() => removeFigmaFile(f.key)}>삭제</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <BusinessReportSection userNN={getUserNN()} />
     </div>

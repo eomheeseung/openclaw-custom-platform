@@ -429,6 +429,19 @@ function doorayApiRequest(method, apiUrl, doorayToken, body) {
   });
 }
 
+function figmaApi(path, token) {
+  return new Promise((resolve) => {
+    const r = https.request({ hostname: 'api.figma.com', path, method: 'GET',
+                              headers: { 'X-Figma-Token': token } }, (res2) => {
+      let data = '';
+      res2.on('data', c => { data += c; });
+      res2.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
+    });
+    r.on('error', () => resolve(null));
+    r.end();
+  });
+}
+
 function gmailApiRequest(method, url, accessToken, body) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(url);
@@ -950,6 +963,33 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       jsonRes(res, 500, { ok: false, error: e.message });
     }
+    return;
+  }
+
+  /* POST /api/figma/resolve — 붙여넣은 URL 에서 파일 키를 뽑고 파일명을 조회한다.
+     피그마는 **사용자 기준 파일 목록 API 가 없고**(명세 확인), 팀·폴더 조회는 관리자 권한이 필요해
+     일반 멤버 토큰으로는 403 이다. 그래서 파일을 개별 등록할 수밖에 없다 —
+     대신 URL 만 붙여넣으면 되도록 키 추출·이름 조회를 서버가 대신한다.
+     Body: { userNN, urls: "여러 줄" } */
+  if (req.method === 'POST' && url.pathname === '/api/figma/resolve') {
+    try {
+      const body = await parseBody(req);
+      const nn = resolveUserNN(req, body.userNN);
+      if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+      const integ = JSON.parse(fs.readFileSync(`/opt/openclaw/data/user${nn}/integrations.json`, 'utf8'));
+      const token = integ?.figma?.token;
+      if (!token) { jsonRes(res, 400, { ok: false, error: '피그마 토큰을 먼저 저장해주세요' }); return; }
+      // /design/<key>/ 또는 /file/<key>/ — node-id 같은 쿼리는 무시한다(같은 파일의 다른 페이지일 뿐)
+      const keys = [...new Set(
+        [...String(body.urls || '').matchAll(/\/(?:design|file|board|slides)\/([A-Za-z0-9]{10,})/g)].map(m => m[1]),
+      )];
+      const files = [];
+      for (const key of keys) {
+        const meta = await figmaApi(`/v1/files/${key}?depth=1`, token);
+        files.push({ key, name: meta?.name || '(이름 조회 실패)', ok: !!meta?.name });
+      }
+      jsonRes(res, 200, { ok: true, files });
+    } catch (e) { jsonRes(res, 500, { ok: false, error: e.message }); }
     return;
   }
 
@@ -4088,6 +4128,20 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (data.github) existing.github = { ...existing.github, ...data.github, updatedAt: new Date().toISOString() };
+      if (data.figma) {
+        existing.figma = { ...existing.figma, ...data.figma, updatedAt: new Date().toISOString() };
+        // 토큰을 새로 넣으면 본인 식별 정보를 함께 저장한다 — 버전 이력에서 내 편집만 골라내는 데 쓴다
+        if (data.figma.token) {
+          try {
+            const me = await figmaApi('/v1/me', data.figma.token);
+            if (me?.id) {
+              existing.figma.userId = me.id;
+              existing.figma.handle = me.handle || '';
+              console.log(`[figma] user${userNN}: ${existing.figma.handle} (${existing.figma.userId})`);
+            }
+          } catch (e) { console.warn('[figma] /v1/me 실패:', e.message); }
+        }
+      }
       fs.writeFileSync(intFile, JSON.stringify(existing, null, 2));
       jsonRes(res, 200, { ok: true });
     } catch (err) {

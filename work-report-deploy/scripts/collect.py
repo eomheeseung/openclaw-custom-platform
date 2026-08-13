@@ -12,8 +12,13 @@
   호출 실패는 failures 로 반환해 카드 배지로 띄운다.
 """
 import json
+import os
 import re
 import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 
@@ -321,20 +326,53 @@ def collect_github(owner, date_from, date_to, token=None, author=None):
     return items, True
 
 
-def collect_figma(file_keys, member_name):
-    """등록 파일의 버전 이력에서 본인 것만.
-    ⚠ figma CLI 미배포 — file_keys 가 비어 있는 동안은 휴면 (호출 안 됨)."""
+FIGMA_API = "https://api.figma.com"
+
+
+def collect_figma(nn, date_from, date_to):
+    """등록된 파일의 버전 이력에서 **본인 편집만** 골라 파일당 한 줄로 낸다.
+
+    ⚠ 자동 발견이 불가능하다 — 피그마에는 **사용자 기준 파일 목록 API 가 없고**(명세 확인),
+    팀·폴더 조회는 관리자 권한이 필요해 일반 멤버 토큰으로는 403 이다. 그래서 개별 등록만 가능하다.
+    버전에 label 이 거의 없어(자동 저장) '무엇을 했는지'는 알 수 없고 '편집했다'만 남는다.
+    """
+    try:
+        integ = json.load(open(f"{paths.data_dir(nn)}/integrations.json"))
+    except Exception:
+        return [], False
+    fig = integ.get("figma") or {}
+    token, user_id = fig.get("token"), str(fig.get("userId") or "")
+    files = fig.get("fileKeys") or []
+    if not token or not files:
+        return [], True                # 미설정 = 조회 안 함 (정상)
+    if not user_id:
+        return [], False               # 본인 식별이 없으면 남의 편집이 섞인다 — 실패로 드러냄
     items, ok_all = [], True
-    for key in file_keys or []:
-        ok, d = _run(f"figma versions {key}")
-        ok_all = ok_all and ok
-        for v in d.get("versions", []):
-            who = ((v.get("user") or {}).get("handle") or "")
-            if member_name and member_name not in who:
-                continue
-            items.append(normalize_item(
-                {"title": v.get("label") or "디자인 작업", "date": v.get("created_at")},
-                "figma", None, f"https://www.figma.com/file/{key}", "done"))
+    for f in files:
+        key = f.get("key") if isinstance(f, dict) else f
+        name = (f.get("name") if isinstance(f, dict) else None) or key
+        cmd = ["curl", "-s", "-m", "30", "-H", f"X-Figma-Token: {token}",
+               f"{FIGMA_API}/v1/files/{key}/versions"]
+        try:
+            d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=45).stdout)
+        except Exception:
+            ok_all = False
+            continue
+        if d.get("status"):
+            ok_all = False
+            continue
+        mine = [v for v in d.get("versions", [])
+                if str((v.get("user") or {}).get("id")) == user_id
+                and in_period(v.get("created_at"), date_from, date_to)]
+        if not mine:
+            continue
+        # 파일당 한 줄 — 횟수는 세지 않는다. 편집한 사실만 남기면 된다.
+        latest = max(mine, key=lambda v: v.get("created_at") or "")
+        label = (latest.get("label") or "").strip()
+        items.append(normalize_item(
+            {"title": f"{name} 시안 편집" + (f" ({label})" if label else ""),
+             "date": latest.get("created_at")},
+            "figma", None, f"https://www.figma.com/design/{key}", "done", project=name))
     return items, ok_all
 
 
@@ -361,8 +399,5 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
         take("github", *collect_github(g.get("owner"), date_from, date_to,
                                        token=g.get("token"), author=g.get("username")))
     if tool_enabled(tools, "figma"):
-        keys = []
-        for b in businesses:
-            keys += b.get("figma_file_keys") or []
-        take("figma", *collect_figma(keys, figma_name))
+        take("figma", *collect_figma(nn, date_from, date_to))
     return items, stats, failures
