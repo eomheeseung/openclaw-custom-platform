@@ -21,7 +21,13 @@
         },
         "tools": {},
         "workspace": "/home/node/.openclaw/workspace-work-report",
-        "agentDir": "/home/node/.openclaw/agents/work-report/agent"
+        "agentDir": "/home/node/.openclaw/agents/work-report/agent",
+        "model": {
+          "primary": "openai/gpt-5.6-luna",
+          "fallbacks": [
+            "moonshot/kimi-k3"
+          ]
+        }
       },
       "data_init": {
         "path": "work-report/config.json",
