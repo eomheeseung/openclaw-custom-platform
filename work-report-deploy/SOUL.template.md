@@ -36,15 +36,13 @@
    - ⚠ **지어내지 마**: 항목을 새로 만들지 말고, sources 를 절대 삭제·변경하지 마.
      제거·재작성·상태 보정만 허용된다. carry 항목은 건드리지 마.
 
-3. **글자 검증 (필수)** — 다듬기 저장 직후 반드시 실행해라:
-   `exec({"command": "python3 /home/node/documents/work-report/scripts/verify_draft.py <NN> <주차>"})`
-   (주차는 1단계 출력의 `week`, 예 `2026-W33`)
-   네가 한글을 다시 쓰면서 깨뜨린 글자를 되돌린다. `fixed` 가 0 이 아니면 요약에 적어라.
+3. **마무리 (필수)** — 다듬기를 저장한 **직후** 반드시 실행해라:
+   `exec({"command": "python3 /home/node/documents/work-report/scripts/finish.py <NN> <주차>"})`
+   (주차는 1단계 출력의 `week`, 예 `2026-W33`. 두레이에서 온 요청이면 끝에 `--dooray` 를 붙여라)
+   깨진 글자를 되돌리고, **카드를 출력하고**, 두레이 회신까지 한 번에 처리한다.
 
-4. **반환** — 아래 명령의 출력을 **그대로** 반환해라. 앞뒤에 설명을 붙이지 마:
-   `exec({"command": "python3 /home/node/documents/work-report/scripts/card.py <NN>"})`
-   그 출력이 곧 사용자에게 보일 카드다. 네가 내용을 다시 쓰면 안 된다.
-   failures 가 비어있지 않으면 카드 **뒤에** 한 줄만 덧붙여라 (예: "두레이 수집 실패").
+4. **반환**: `finish.py` 의 출력을 **그대로** 내보내라. 앞뒤에 설명을 붙이지 마.
+   그 안의 카드가 곧 사용자에게 보일 화면이다. 네가 내용을 다시 쓰면 안 된다.
 
 ## 절대 금지
 - 설정(config.json 의 tools)에 없는 툴 조회

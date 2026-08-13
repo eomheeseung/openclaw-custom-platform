@@ -161,11 +161,7 @@ if __name__ == "__main__":
         print(json.dumps({"ok": True, "path": path, "week": d["week"], "total": total,
                           "stats": d["stats"], "failures": d["failures"],
                           "warnings": len(d["warnings"])}, ensure_ascii=False))
-        # 카드도 함께 낸다 — 화면이 도구 결과에서 이 블록을 찾아 렌더한다.
-        # 모델에게 카드를 뱉게 시키면 매번 요약해 카드가 사라졌고(실측 5회+),
-        # 다듬기 단계를 건너뛰는 회차도 있어 verify_draft 에만 맡길 수 없다.
-        # 명백한 노이즈(광고·타인 결재·장소 일정)는 수집에서 이미 걸렀으므로 이 상태로도 쓸 만하다.
-        print(f"```work-draft\n{json.dumps(d, ensure_ascii=False, indent=2)}\n```")
+        # 카드는 finish.py 가 낸다 — 여기서 내면 다듬기 전(파일명·원문 그대로)이 박힌다(실측).
     except Exception as e:
         run_log.record(nn, ok=False, error=str(e))
         print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
