@@ -1049,6 +1049,25 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
             (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
           );
           setMessages(merged);
+          /* 초안 카드는 기록에서 잘려 온다 — 게이트웨이가 메시지 하나를 8,000자로 자르는데
+             카드 JSON 은 9~23KB 다. 잘린 JSON 은 파싱이 안 돼 카드가 사라진다(실측:
+             페이지를 나갔다 오면 없어짐). 카드가 있던 자리면 초안을 다시 받아 그린다. */
+          if (/^agent:work-report:/.test(sessionKey)
+              && merged.some(m => (m.content || '').includes('```work-draft'))) {
+            fetch(`/api/work-report/draft${draftQuery()}`, { credentials: 'include' })
+              .then(r => r.json())
+              .then(j => {
+                if (!j?.ok || !j.draft) return;
+                const body = '```work-draft\n' + JSON.stringify(j.draft, null, 2) + '\n```';
+                setMessages(prev => prev.some(m => m.id === 'draft-history') ? prev : [...prev, {
+                  id: 'draft-history',
+                  role: 'toolResult' as const,
+                  content: body,
+                  timestamp: merged[merged.length - 1]?.timestamp || new Date(),
+                }]);
+              })
+              .catch(() => { /* 초안이 없으면 그냥 안 그린다 */ });
+          }
         }
       })
       .catch(err => console.error('chat.history failed:', err));
