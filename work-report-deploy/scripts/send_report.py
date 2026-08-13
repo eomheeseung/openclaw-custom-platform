@@ -21,6 +21,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
 import week_util
 
+
+def _out(proc):
+    """subprocess 출력을 UTF-8 로 직접 디코드한다.
+
+    ⚠ `text=True` 를 쓰면 안 된다 — 한글이 깨진다(실측: 한국건강증진'개'발원 의 개 한 글자가
+    U+FFFD 3개로 바뀌었다. 원본 API 응답은 멀쩡했다). 모델이 깨뜨린 줄 알았던 글자 중
+    일부가 여기서 생긴 것이다."""
+    return (proc.stdout or b"").decode("utf-8", "replace")
+
 TOOL_KO = {"dooray": "두레이", "gmail": "메일", "calendar": "캘린더",
            "drive": "드라이브", "github": "GitHub", "figma": "Figma"}
 
@@ -58,8 +67,8 @@ def send(nn, subject, body, to, cc):
     payload = json.dumps({"to": ",".join(to), "cc": ",".join(cc),
                           "subject": subject, "body": body}, ensure_ascii=False)
     # gcurl 은 컨테이너 안에서 게이트웨이로 보내는 래퍼다 (발송 큐에 적재)
-    out = subprocess.run(["gcurl", "POST", "/api/mail/send", payload],
-                         capture_output=True, text=True, timeout=60).stdout
+    out = _out(subprocess.run(["gcurl", "POST", "/api/mail/send", payload],
+                         capture_output=True, timeout=60))
     try:
         return json.loads(out)
     except Exception:

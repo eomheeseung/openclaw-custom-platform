@@ -20,6 +20,15 @@ import paths
 import week_util
 from datetime import datetime
 
+
+def _out(proc):
+    """subprocess 출력을 UTF-8 로 직접 디코드한다.
+
+    ⚠ `text=True` 를 쓰면 안 된다 — 한글이 깨진다(실측: 한국건강증진'개'발원 의 개 한 글자가
+    U+FFFD 3개로 바뀌었다. 원본 API 응답은 멀쩡했다). 모델이 깨뜨린 줄 알았던 글자 중
+    일부가 여기서 생긴 것이다."""
+    return (proc.stdout or b"").decode("utf-8", "replace")
+
 BOT_NAME = "TideClaw"
 DIRECT_SEND = "https://api.dooray.com/messenger/v1/channels/direct-send"
 
@@ -30,7 +39,7 @@ def _post(url, body, headers=()):
         cmd += ["-H", h]
     cmd += ["-d", json.dumps(body, ensure_ascii=False), url]
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout
+        return _out(subprocess.run(cmd, capture_output=True, timeout=30))
     except Exception:
         return None
 

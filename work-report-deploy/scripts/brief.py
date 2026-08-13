@@ -22,6 +22,15 @@ import collect
 import notify
 import paths
 
+
+def _out(proc):
+    """subprocess 출력을 UTF-8 로 직접 디코드한다.
+
+    ⚠ `text=True` 를 쓰면 안 된다 — 한글이 깨진다(실측: 한국건강증진'개'발원 의 개 한 글자가
+    U+FFFD 3개로 바뀌었다. 원본 API 응답은 멀쩡했다). 모델이 깨뜨린 줄 알았던 글자 중
+    일부가 여기서 생긴 것이다."""
+    return (proc.stdout or b"").decode("utf-8", "replace")
+
 MAIL_API = "http://172.18.0.1:18799/api/mail/search"
 MAIL_MAX = 5          # 아침부터 스크롤이 길어지면 안 읽는다
 MAIL_DAYS = 3
@@ -36,7 +45,7 @@ def _api(url, params):
     for k, v in params.items():
         cmd += ["--data-urlencode", f"{k}={v}"]
     try:
-        return json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=40).stdout)
+        return json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=40)))
     except Exception:
         return {}
 
@@ -46,7 +55,7 @@ def today_events(nn, today):
            "-d", json.dumps({"userNN": nn, "timeMin": today, "timeMax": today}, ensure_ascii=False),
            collect.CALENDAR_API]
     try:
-        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=40).stdout)
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=40)))
     except Exception:
         return []
     out = []
@@ -131,7 +140,7 @@ def day_off(nn, today, events):
                              "calendarId": HOLIDAY_CAL}, ensure_ascii=False),
            collect.CALENDAR_API]
     try:
-        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout)
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=30)))
     except Exception:
         return ""                      # 공휴일 조회 실패로 브리핑을 막지는 않는다
     for e in d.get("events", []):
@@ -146,7 +155,7 @@ def raw_titles(nn, today):
            "-d", json.dumps({"userNN": nn, "timeMin": today, "timeMax": today}, ensure_ascii=False),
            collect.CALENDAR_API]
     try:
-        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=40).stdout)
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=40)))
     except Exception:
         return []
     return [(e.get("title") or "").strip() for e in d.get("events", [])]
@@ -184,7 +193,7 @@ def sr_summary(nn, today):
                f"&from={frm}&to={today}&limit={SR_API_LIMIT}")
         cmd = ["curl", "-s", "-m", "25", "-H", f"Authorization: Bearer {tok}", url]
         try:
-            d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=35).stdout)
+            d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=35)))
         except Exception:
             continue
         items = d if isinstance(d, list) else (d.get("data") or d.get("items") or [])

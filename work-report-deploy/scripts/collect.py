@@ -24,6 +24,15 @@ from week_util import next_week_range
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 
+
+def _out(proc):
+    """subprocess 출력을 UTF-8 로 직접 디코드한다.
+
+    ⚠ `text=True` 를 쓰면 안 된다 — 한글이 깨진다(실측: 한국건강증진'개'발원 의 개 한 글자가
+    U+FFFD 3개로 바뀌었다. 원본 API 응답은 멀쩡했다). 모델이 깨뜨린 줄 알았던 글자 중
+    일부가 여기서 생긴 것이다."""
+    return (proc.stdout or b"").decode("utf-8", "replace")
+
 BLOCKED_TOOLS = {"sr"}
 KNOWN_TOOLS = ["dooray", "gmail", "calendar", "drive", "github", "figma"]
 
@@ -87,8 +96,7 @@ def normalize_item(raw, source, biz_id=None, url=None, status="done", **extra):
 def _run(cmd):
     """CLI 실행 → (ok, dict). JSON 아니거나 ok:false 면 실패."""
     try:
-        out = subprocess.run(cmd, shell=True, capture_output=True,
-                             text=True, timeout=60).stdout
+        out = _out(subprocess.run(cmd, shell=True, capture_output=True, timeout=60))
         d = json.loads(out)
         if isinstance(d, dict) and d.get("ok") is not False:
             return True, d
@@ -201,7 +209,7 @@ def collect_calendar(nn, date_from, date_to, status="done"):
            "-d", json.dumps({"userNN": nn, "timeMin": date_from, "timeMax": date_to},
                             ensure_ascii=False), CALENDAR_API]
     try:
-        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout)
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=60)))
     except Exception:
         return [], False
     if not d.get("ok"):
@@ -216,6 +224,30 @@ def collect_calendar(nn, date_from, date_to, status="done"):
     return items, True
 
 
+# 문서 파일명 정리 — 확장자·버전·날짜·구분자를 규칙으로 걷어낸다.
+# 이걸 모델에게 시키면 한 줄에 3초씩 걸린다(실측: 36건 다듬기에 105초).
+RE_EXT = re.compile(r"\.(xlsx?|docx?|pptx?|pdf|hwpx?|md|txt|csv|png|jpe?g|gif|zip)$", re.I)
+RE_VER = re.compile(r"[_\s-]*[vV]?\d+(\.\d+)+\s*$")           # _v1.3, v2.1, 5.5
+RE_DATE = re.compile(r"[_\s-]*\(?\d{6,8}\)?\s*$")              # _20260811, 260812
+RE_SEQ = re.compile(r"\s*\(\d{1,3}\)\s*$")                     # (25) — 다운로드 사본 번호
+
+
+# 그 자체로 뜻이 없는 토막 — 날짜(20260811·260812), 버전(v1.2·2.1)
+RE_JUNK_TOKEN = re.compile(r"^(\d{6,8}|[vV]?\d+(\.\d+)+)$")
+
+
+def clean_filename(name):
+    """파일명을 사람이 읽는 제목으로. 뜻이 있는 부분은 건드리지 않는다."""
+    t = RE_EXT.sub("", (name or "").strip())
+    t = RE_SEQ.sub("", t)                    # 끝의 (25) — 다운로드 사본 번호
+    t = re.sub(r"[_]+", " ", t)              # 언더바는 원래 띄어쓰기 자리다
+    # 날짜·버전 토막은 위치와 무관하게 뺀다. 단어로 붙어 있는 숫자(15종·A-B)는 남는다.
+    parts = [w for w in t.split() if not RE_JUNK_TOKEN.match(w)]
+    t = " ".join(parts)
+    t = re.sub(r"\s*-\s*$", "", t).strip(" -")
+    return t or (name or "").strip()
+
+
 DRIVE_API = "http://172.18.0.1:18799/api/drive/advanced-search"
 # 스크린샷 파일명(예: "2026-08-11 19_04_17.348.png") — 보고 대상이 아니다
 RE_SCREENSHOT = re.compile(r"^\d{4}-\d{2}-\d{2}[ _]\d{2}[_:]\d{2}[_:]\d{2}")
@@ -226,7 +258,7 @@ def _drive_call(payload):
     cmd = ["curl", "-s", "-m", "40", "-X", "POST", "-H", "Content-Type: application/json",
            "-d", json.dumps(payload, ensure_ascii=False), DRIVE_API]
     try:
-        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout)
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=60)))
     except Exception:
         return None
     return d if d.get("ok") else None
@@ -287,9 +319,10 @@ def collect_drive(nn, date_from, date_to, member_email=None):
             continue
         # driveId 가 없으면 개인 드라이브 — 사업을 특정할 수 없어 공통으로 간다
         container = drive_names.get(f.get("driveId"))
+        # 파일명 정리는 규칙으로 끝낸다 — 모델에 맡기면 한 줄에 3초씩 든다
         items.append(normalize_item(
-            {"title": name, "date": f.get("modifiedTime")}, "drive", None,
-            f.get("webViewLink"), "done", project=container))
+            {"title": clean_filename(name), "date": f.get("modifiedTime")}, "drive", None,
+            f.get("webViewLink"), "done", project=container, raw_text=name))
     # 산출물이 많은 주에는 수십 건이 나온다(실측 122건). 최신순으로 잘라 다듬기 부담을 줄이되,
     # **공유 드라이브 파일은 자르지 않는다** — 사업이 특정되는 실제 산출물이라
     # 상한에 밀려 사라지면 보고에서 누락된다. 개인 드라이브만 상한을 적용한다.
@@ -306,7 +339,7 @@ def _gh(url, token):
     cmd = ["curl", "-s", "-m", "30", "-H", f"Authorization: Bearer {token}",
            "-H", "Accept: application/vnd.github+json", url]
     try:
-        return json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=45).stdout)
+        return json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=45)))
     except Exception:
         return None
 
@@ -367,7 +400,7 @@ FIG_NAME_MAX = 3         # 한 줄에 나열할 프레임 이름 수
 def _fig_get(token, url, timeout=60):
     cmd = ["curl", "-s", "-m", str(timeout - 5), "-H", f"X-Figma-Token: {token}", url]
     try:
-        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout)
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=timeout)))
     except Exception:
         return None
     return None if d.get("status") else d
@@ -449,7 +482,7 @@ def collect_figma(nn, date_from, date_to):
         cmd = ["curl", "-s", "-m", "30", "-H", f"X-Figma-Token: {token}",
                f"{FIGMA_API}/v1/files/{key}/versions"]
         try:
-            d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=45).stdout)
+            d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=45)))
         except Exception:
             ok_all = False
             continue
