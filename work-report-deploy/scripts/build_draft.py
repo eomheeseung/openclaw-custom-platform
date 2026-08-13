@@ -142,6 +142,18 @@ def build(nn, date_from, date_to):
         "common": common, "stats": stats, "failures": failures,
         "warnings": find_unsourced(items),
     }
+    # 항목마다 번호를 박아둔다 — 다듬기 때 모델이 파일 전체(9KB)를 다시 쓰지 않고
+    # "3번을 이 문장으로" 처럼 번호만 돌려주면 되게 하기 위해서다.
+    # 전체 재작성을 시켰더니 한 회차에 4분 넘게 걸렸다(실측).
+    n = 0
+    for g in draft["businesses"]:
+        for it in g["items"]:
+            n += 1
+            it["n"] = n
+    for it in draft["common"]:
+        n += 1
+        it["n"] = n
+
     out_dir = f"{base}/work-report/drafts"
     os.makedirs(out_dir, exist_ok=True)
     out = f"{out_dir}/draft-{week}.json"
@@ -170,9 +182,13 @@ if __name__ == "__main__":
     try:
         path, d = build(nn, f, t)
         total = sum(len(g["items"]) for g in d["businesses"]) + len(d["common"])
+        rows = [{"n": it["n"], "biz": g["alias"], "text": it["text"], "status": it["status"]}
+                for g in d["businesses"] for it in g["items"]]
+        rows += [{"n": it["n"], "biz": "", "text": it["text"], "status": it["status"]}
+                 for it in d["common"]]
         print(json.dumps({"ok": True, "path": path, "week": d["week"], "total": total,
                           "stats": d["stats"], "failures": d["failures"],
-                          "warnings": len(d["warnings"])}, ensure_ascii=False))
+                          "warnings": len(d["warnings"]), "items": rows}, ensure_ascii=False))
         # 카드는 finish.py 만 낸다 — 여기서도 내면 다듬기 전/후 카드가 두 번 그려진다.
         # (SOUL 을 명령 중심으로 줄인 뒤 마지막 단계를 건너뛰지 않는 것을 확인했다)
     except Exception as e:
