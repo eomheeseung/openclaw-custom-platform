@@ -406,6 +406,20 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
             );
           }
 
+          /* 자동 이관 안내 — 이미 끝난 사실을 알리는 것이라 대기 표시가 없다.
+             아래 위임 뱃지 로직을 타면 '멘션 응답'을 기다리며 영원히 도는데,
+             세션 전환 방식에는 그런 응답이 없다(실측: 307초째 회전). */
+          if (isSystem && message.id.startsWith('route-')) {
+            return (
+              <div key={message.id} className="flex justify-center my-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs
+                                 bg-accent/[0.06] border border-accent/20 text-accent">
+                  {message.content}
+                </span>
+              </div>
+            );
+          }
+
           // Delegation badge — 위임 표시 + 응답 도착 여부에 따라 spinner/완료 표시
           if (isSystem) {
             /* 위임 system 다음에 isMention assistant 응답이 도착했는지 확인 */
