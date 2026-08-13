@@ -360,9 +360,6 @@ async function pollUser(u, state) {
       `   exec: python3 /home/node/documents/work-report/scripts/notify.py ${u.nn} "3줄 이내 요약"`,
       `   카드(work-draft 등)는 두레이로 보내지 마. 대신 이 링크를 회신에 그대로 붙여라:`,
       `   ${webLink(u.nn, key0)}`,
-      ...(matched0
-        ? [`   회신 끝에 이 안내를 그대로 덧붙여라: "이어서 고치시려면 앞에 «${agentDisplayName(u.nn, matched0)}» 를 붙여주세요."`]
-        : []),
     ].join("\n");
     const ok = await sendToSession(u.nn, body, key0, null);
     if (!ok) {
