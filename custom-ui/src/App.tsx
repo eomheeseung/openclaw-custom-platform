@@ -408,6 +408,16 @@ function App() {
     }
   }, [clearSession]);
 
+  /* 자동 라우팅이 담당 에이전트 세션으로 옮기면 화면 상단 이름도 따라가야 한다.
+     selectedAgent 가 우선이라 그대로 두면 세션은 업무보고인데 머리글은 비서로 남는다. */
+  useEffect(() => {
+    if (!currentSession) return;
+    const m = currentSession.match(/^agent:([^:]+):/);
+    if (!m) return;
+    const a = agents.find(x => x.id === m[1]);
+    if (a && a.id !== selectedAgent?.id) setSelectedAgent(a);
+  }, [currentSession, agents, selectedAgent?.id]);
+
   const resolveAgentFromSessionKey = useCallback((sessionKey: string | undefined): Agent | null => {
     if (!sessionKey) return null;
     const m = sessionKey.match(/^agent:([^:]+):/);

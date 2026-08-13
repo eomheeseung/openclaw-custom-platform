@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ConnectionStatus, Agent, Session, ProtocolFrame } from '../types';
 import { shouldHideMessage } from '../utils/messageFilter';
-import { withAgentMention } from '../utils/agentRouting';
+import { resolveAgentFor } from '../utils/agentRouting';
 
 interface UseWebSocketProps {
   url: string;
@@ -742,12 +742,12 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
 
   // Send chat message
   const sendMessage = useCallback(async (contentRaw: string, attachments?: File[]) => {
-    /* 담당 에이전트가 문장에서 드러나면 멘션을 붙여 **비서를 거치지 않고** 직접 보낸다.
-       비서는 위임까지는 하지만 결과를 자기 말로 다시 써서 카드가 사라진다(실측). */
-    let content = withAgentMention(contentRaw, agentsRef.current);
-    if (content === contentRaw && lastMentionAgentRef.current && !contentRaw.trimStart().startsWith('@')) {
-      content = `@${lastMentionAgentRef.current} ${contentRaw}`;
-    }
+    /* 담당 에이전트가 문장에서 드러나면 **그 에이전트와의 대화로 전환**한다.
+       비서에게 맡기면 위임 결과를 자기 말로 다시 써서 카드가 사라지고(실측),
+       멘션으로 보내면 임시 세션이라 이력이 남지 않는다(서버에 안 쌓이고 사이드바에서도 숨겨진다).
+       `@` 를 직접 친 경우는 원래 의도대로 '잠깐 물어보기'(임시 세션)로 둔다. */
+    const content = contentRaw;
+    const autoAgent = resolveAgentFor(contentRaw, agentsRef.current);
     // @멘션 파싱: 메시지 맨 앞 @<agentId> 감지
     const mentionMatch = content.match(/^@([a-zA-Z0-9_-]+)\s+([\s\S]*)$/);
     let mentionTargetId: string | null = null;
@@ -764,6 +764,15 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     const idempotencyKey = generateId();
     // ChatGPT 방식: currentSession 없으면 selectedAgent 기반으로 새 세션 키를 즉시 생성하고 set
     let activeSessionKey = currentSession;
+    /* 자동 라우팅: 지금 대화가 그 담당이 아니면 담당과의 새 대화로 옮긴다.
+       이미 그 담당과 이야기 중이면 그대로 이어간다. */
+    if (autoAgent && !mentionTargetId) {
+      const cur = String(activeSessionKey || '');
+      if (!cur.startsWith(`agent:${autoAgent.id}:`)) {
+        activeSessionKey = `agent:${autoAgent.id}:${generateId().slice(0, 8)}`;
+        setCurrentSession(activeSessionKey);
+      }
+    }
     if (!activeSessionKey) {
       // 첫 메시지 발신 시 — selectedAgent의 id 기반 새 세션 자동 생성
       // (selectedAgent는 외부 prop이므로 fallback으로 'main' 유지)
