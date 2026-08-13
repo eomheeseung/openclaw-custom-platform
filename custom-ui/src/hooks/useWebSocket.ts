@@ -772,6 +772,15 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
       if (!cur.startsWith(`agent:${autoAgent.id}:`)) {
         activeSessionKey = `agent:${autoAgent.id}:${generateId().slice(0, 8)}`;
         setCurrentSession(activeSessionKey);
+        /* 대화가 담당에게 넘어간 것을 눈에 보이게 남긴다.
+           아무 표시 없이 화면만 바뀌면 사용자는 무슨 일이 일어났는지 알 수 없다. */
+        const short = contentRaw.trim().slice(0, 40) + (contentRaw.trim().length > 40 ? '…' : '');
+        setMessages(prev => [...prev, {
+          id: `route-${idempotencyKey}`,
+          role: 'system' as const,
+          content: `"${short}" → ${autoAgent.name} 에게 전달했습니다`,
+          timestamp: new Date(),
+        }]);
       }
     }
 

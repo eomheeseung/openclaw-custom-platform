@@ -97,7 +97,11 @@ const CARD_FENCE_MARKERS: readonly string[] = [
 /* 모델은 같은 카드를 ```json 으로 감싸기도, 맨 JSON 으로 내기도 한다(실측 둘 다 관찰). */
 /** 보고 담당에게 보낼 때 덧붙이는 마무리 지시 — 사용자에게 보일 내용이 아니다.
     (두레이 데몬이 붙이는 지시와 같은 목적. 웹은 이게 없어 카드가 자주 누락됐다) */
-export const FINISH_HINT = '↳ 마무리 단계를 반드시 실행해라 (거기서 카드가 나온다). 결과를 네 말로 다시 쓰지 마라.';
+export const FINISH_HINT = [
+  '↳ 마무리는 이 명령 하나다. 사용법을 확인하려고 소스를 열지 마라:',
+  '   exec: python3 /home/node/documents/work-report/scripts/finish.py',
+  '   (사용자 번호·주차는 스크립트가 알아서 정한다. 출력을 그대로 내보내고 네 말로 다시 쓰지 마라)',
+].join('\n');
 
 const KIND_CARD_RE = /^\s*(?:```json\s*)?\[?\s*\{\s*"kind"\s*:/;
 
@@ -271,7 +275,7 @@ export function cleanDisplayContent(content: string): string {
     /* 두레이 데몬이 메시지에 함께 싣는 회신 지시 — 사용자에게 보일 내용이 아니다.
        BOOTSTRAP 은 세션 첫 턴에만 읽혀서 지시를 본문에 동봉할 수밖에 없다. */
     .replace(/\n*↳ 두레이에서 온 요청이다[\s\S]*$/g, '')
-    .replace(/\n*↳ 마무리 단계를 반드시 실행해라[\s\S]*$/g, '')
+    .replace(/\n*↳ 마무리는 이 명령 하나다[\s\S]*$/g, '')
     /* 스크립트 실행 결과의 부산물 — 카드만 보이면 된다 */
     .replace(/^\s*\{"ok":\s*(?:true|false)[^\n]*\}\s*$/gm, '')
     .replace(/^\s*Process exited with code \d+\.\s*$/gm, '')

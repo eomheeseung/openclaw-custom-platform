@@ -334,7 +334,10 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
             // 로딩 중 비어있는 assistant는 통과시켜 "응답을 작성하고 있습니다" 표시
             if (m.role === 'assistant' && m.isLoading && (!m.content || m.content.trim().length === 0)) return true;
             // working/working- system + toolCalls 있는 system은 통과 (별도 렌더)
-            if (m.role === 'system' && (m.id.startsWith('working-') || (m.toolCalls && m.toolCalls.length > 0))) return true;
+            if (m.role === 'system' && m.id.startsWith('working-')) return true;
+            /* 도구 호출 카드는 감춘다 — 명령 원문이 화면을 가득 채우고,
+               사용자가 볼 이유도 없다. 진행 상황은 '응답 생성 중' 표시로 충분하다. */
+            if (m.id.startsWith('toolcall-')) return false;
             return !shouldHideMessage(m.role, m.content || '');
           });
           /* 마지막 user 메시지 이후 assistant 응답이 아직 없는지 — "비서 생각 중" 카드 결정용 */
