@@ -331,6 +331,25 @@ def clean_filename(name):
 
 
 DRIVE_API = "http://172.18.0.1:18799/api/drive/advanced-search"
+FOLDER_API = "http://172.18.0.1:18799/api/drive/folder-names"
+# 그 자체로는 무슨 일인지 알 수 없는 문서 이름 — 폴더 이름을 앞에 붙여 맥락을 준다
+RE_GENERIC_DOC = re.compile(
+    r"^(발표자료|오류사항|샘플\s*양식|샘플|양식|자료|문서|회의록|메모|참고자료|초안|정리|목록|현황|"
+    r"업무|테스트|기타|첨부|사진|이미지|캡처|접속정보|시스템\s*접속정보|서버\s*정보)$")
+
+
+def folder_names(nn, ids):
+    """폴더 ID → 이름. 파일마다 부르면 느리므로 한 번에 받는다."""
+    ids = [i for i in {str(x) for x in ids} if i]
+    if not ids:
+        return {}
+    cmd = ["curl", "-s", "-m", "30", "-X", "POST", "-H", "Content-Type: application/json",
+           "-d", json.dumps({"userNN": nn, "ids": ids}, ensure_ascii=False), FOLDER_API]
+    try:
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=40)))
+    except Exception:
+        return {}
+    return d.get("names") or {}
 # 스크린샷 파일명(예: "2026-08-11 19_04_17.348.png") — 보고 대상이 아니다
 RE_SCREENSHOT = re.compile(r"^\d{4}-\d{2}-\d{2}[ _]\d{2}[_:]\d{2}[_:]\d{2}")
 DRIVE_MAX = 40
@@ -394,6 +413,8 @@ def collect_drive(nn, date_from, date_to, member_email=None):
     # project(= 드라이브명)를 사업명과 유사도 비교해 매핑한다.
     ok_s, ds = _run("gog drive shared")
     drive_names = {x.get("id"): x.get("name") for x in ds.get("drives", [])} if ok_s else {}
+    # 폴더 이름을 미리 받아둔다 — "발표자료" 만으로는 무슨 일인지 알 수 없다
+    folders = folder_names(nn, [p for f in d.get("files", []) for p in (f.get("parents") or [])])
     items = []
     for f in d.get("files", []):
         name = (f.get("name") or "").strip()
@@ -402,8 +423,13 @@ def collect_drive(nn, date_from, date_to, member_email=None):
         # driveId 가 없으면 개인 드라이브 — 사업을 특정할 수 없어 공통으로 간다
         container = drive_names.get(f.get("driveId"))
         # 파일명 정리는 규칙으로 끝낸다 — 모델에 맡기면 한 줄에 3초씩 든다
+        title = clean_filename(name)
+        folder = clean_filename(folders.get((f.get("parents") or [None])[0]) or "")
+        # 뜻 없는 이름에만 폴더를 붙인다. 폴더 이름이 같으면(오류사항/오류사항) 정보가 없다.
+        if folder and RE_GENERIC_DOC.match(title) and folder not in title and title not in folder:
+            title = f"{folder} {title}"
         items.append(normalize_item(
-            {"title": clean_filename(name), "date": f.get("modifiedTime")}, "drive", None,
+            {"title": title, "date": f.get("modifiedTime")}, "drive", None,
             f.get("webViewLink"), "done", project=container, raw_text=name))
     # 산출물이 많은 주에는 수십 건이 나온다(실측 122건). 최신순으로 잘라 다듬기 부담을 줄이되,
     # **공유 드라이브 파일은 자르지 않는다** — 사업이 특정되는 실제 산출물이라

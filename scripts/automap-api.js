@@ -2313,6 +2313,28 @@ const server = http.createServer(async (req, res) => {
   // ===== Drive API =====
 
   // GET /api/drive/shared - List shared drives
+  /* POST /api/drive/folder-names — 폴더 ID → 이름.
+     "발표자료.pptx" 처럼 파일명만으로는 무슨 일인지 알 수 없다. 들어 있는 폴더 이름이
+     맥락을 준다("진로역량교육/발표자료"). 파일마다 호출하면 느리므로 ID 를 모아 한 번에 받는다. */
+  if (req.method === 'POST' && url.pathname === '/api/drive/folder-names') {
+    try {
+      const body = await parseBody(req);
+      const userNN = resolveUserNN(req, body.userNN);
+      if (!userNN || !validateUserNN(userNN)) { jsonRes(res, 400, { ok: false, error: 'Invalid userNN' }); return; }
+      const ids = [...new Set((body.ids || []).map(String))].slice(0, 60);
+      const accessToken = await getValidAccessToken(userNN);
+      const out = {};
+      await Promise.all(ids.map(async id => {
+        const r = await gmailApiRequest('GET',
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType&supportsAllDrives=true`,
+          accessToken).catch(() => null);
+        if (r && r.status < 400 && r.data?.name) out[id] = r.data.name;
+      }));
+      jsonRes(res, 200, { ok: true, names: out });
+    } catch (e) { jsonRes(res, 500, { ok: false, error: e.message }); }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/drive/shared') {
     try {
       const userNN = resolveUserNN(req, url.searchParams.get('userNN'));
