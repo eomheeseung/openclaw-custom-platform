@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ConnectionStatus, Agent, Session, ProtocolFrame } from '../types';
 import { shouldHideMessage } from '../utils/messageFilter';
 import { resolveAgentFor } from '../utils/agentRouting';
-import { FINISH_HINT, isConfirmRequest, looksLikeRenderableCard } from '../utils/messageFilter';
+import { FINISH_HINT, isConfirmRequest } from '../utils/messageFilter';
 
 interface UseWebSocketProps {
   url: string;
@@ -29,6 +29,14 @@ interface UseWebSocketReturn {
   sendRequest: (method: string, params?: Record<string, unknown>) => Promise<ProtocolFrame>;
   fetchAgents: () => Promise<void>;
   fetchSessions: () => Promise<void>;
+}
+
+/* 브라우저는 nginx 를 거쳐 오므로 서버가 IP 로 사용자를 못 알아낸다 — 주소의 token 에서 뽑는다 */
+function draftQuery(): string {
+  const t = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('token') || '' : '';
+  const m = t.match(/user(\d+)/i);
+  return m ? `?userNN=${m[1].padStart(2, '0')}` : '';
 }
 
 function generateId(): string {
@@ -140,6 +148,8 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
      "예정사항에 항목 추가해줘" 처럼 에이전트 이름이 없는 후속 문장이 비서로 가면
      비서가 다시 위임하면서 카드가 사라진다(실측). */
   const lastMentionAgentRef = useRef<string | null>(null);
+  /* 확정·발송 요청이었는지 — 그때는 초안 카드를 다시 그리지 않는다 */
+  const lastWasConfirm = useRef(false);
   const agentsRef = useRef<Agent[]>([]);
   const tokenRef = useRef(token);
   tokenRef.current = token;
@@ -499,6 +509,25 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
         fetchSessions();
         setTimeout(() => fetchSessions(), 1500);
       }
+      /* 업무보고 초안 카드는 도구 출력에 실려 있는데, 게이트웨이는 verbose='full' 일 때만
+         그 내용을 실어 보낸다(확인: allowToolOutput = verbose === "full").
+         그래서 실시간에는 카드가 도착하지 않고 새로고침해야 보였다(실측 2회).
+         전체 도구 출력을 켜면 모든 명령 결과가 화면에 쏟아지므로, 초안만 직접 받아 그린다. */
+      if (evtSessionKey && /^agent:work-report:/.test(evtSessionKey) && !lastWasConfirm.current) {
+        fetch(`/api/work-report/draft${draftQuery()}`, { credentials: 'include' })
+          .then(r => r.json())
+          .then(j => {
+            if (!j?.ok || !j.draft) return;
+            const body = '```work-draft\n' + JSON.stringify(j.draft, null, 2) + '\n```';
+            setMessages(prev => prev.some(m => m.id === `draft-${runId}`) ? prev : [...prev, {
+              id: `draft-${runId}`,
+              role: 'toolResult' as const,
+              content: body,
+              timestamp: new Date(),
+            }]);
+          })
+          .catch(() => { /* 초안이 없으면 그냥 안 그린다 */ });
+      }
     } else if (state === 'error') {
       currentRunId.current = null;
       setIsSending(false);
@@ -540,27 +569,6 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     // 내부 도구는 카드에서 제외 (위임 뱃지로 대체 표시)
     const HIDDEN_TOOLS = new Set(['sessions_spawn', 'sessions_yield', 'sessions_continue', 'sessions_complete', 'sessions_resume']);
 
-    /* 도구 출력에 카드가 들어 있으면 그 자리에 꽂는다.
-       start/end 만 처리하고 있었는데, 실제 출력은 phase='result' 에만 실려 온다.
-       그래서 카드가 대화가 끝난 뒤 **새로고침해야** 보였다(실측). 저장된 세션에는
-       toolResult 로 남아 있으므로 히스토리에서는 잘 나왔던 것. */
-    if (phase === 'result' && !HIDDEN_TOOLS.has(toolName)) {
-      const raw = data.result;
-      const text = typeof raw === 'string' ? raw
-        : Array.isArray(raw)
-          ? raw.map(b => (b as { text?: string })?.text || '').join('')
-          : ((raw as { content?: Array<{ text?: string }> } | undefined)?.content || [])
-              .map(b => b?.text || '').join('');
-      if (text && looksLikeRenderableCard(text)) {
-        const msgId = `toolres-${data.toolCallId || data.toolUseId || `${runId}-${Date.now()}`}`;
-        setMessages(prev => prev.some(m => m.id === msgId) ? prev : [...prev, {
-          id: msgId,
-          role: 'toolResult' as const,
-          content: text,
-          timestamp: new Date(),
-        }]);
-      }
-    }
 
     // 일반 도구 호출 표시 (내부 도구 제외)
     if (toolName && !HIDDEN_TOOLS.has(toolName) && phase === 'start') {
@@ -923,7 +931,8 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     const routedId = autoAgent?.id || mentionTargetId;
     /* ⚠ 업무보고에만 붙인다. 사업 주간보고에는 finish.py 가 없어서
        없는 파일을 찾느라 오히려 헤맨다(스크립트: weekly_report/sr_fetch/hwpx_gen). */
-    if (routedId === 'work-report' && !isConfirmRequest(finalMessage)) {
+    lastWasConfirm.current = isConfirmRequest(finalMessage);
+    if (routedId === 'work-report' && !lastWasConfirm.current) {
       finalMessage = `${finalMessage}\n\n${FINISH_HINT}`;
     }
 
