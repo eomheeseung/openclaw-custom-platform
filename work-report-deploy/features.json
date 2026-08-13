@@ -12,8 +12,13 @@
         "id": "work-report",
         "default": false,
         "name": "업무보고",
-        "identity": { "name": "업무보고", "emoji": "📝" },
-        "subagents": { "allowAgents": [] },
+        "identity": {
+          "name": "업무보고",
+          "emoji": "📝"
+        },
+        "subagents": {
+          "allowAgents": []
+        },
         "tools": {},
         "workspace": "/home/node/.openclaw/workspace-work-report",
         "agentDir": "/home/node/.openclaw/agents/work-report/agent"
@@ -21,12 +26,37 @@
       "data_init": {
         "path": "work-report/config.json",
         "content": {
-          "tools": ["dooray", "gmail", "calendar"],
+          "tools": [
+            "dooray",
+            "gmail",
+            "calendar",
+            "drive",
+            "github",
+            "figma"
+          ],
           "dooray_member_id": "",
-          "github": { "owner": "", "repo": "" },
-          "profile": { "team": "", "name": "", "title": "" },
-          "recipients": { "to": [], "cc": [] },
-          "schedule": { "enabled": false, "expr": "0 17 * * 4", "tz": "Asia/Seoul" }
+          "github": {
+            "owner": "",
+            "repo": ""
+          },
+          "profile": {
+            "team": "",
+            "name": "",
+            "title": ""
+          },
+          "recipients": {
+            "to": [],
+            "cc": []
+          },
+          "schedule": {
+            "enabled": false,
+            "expr": "0 17 * * 4",
+            "tz": "Asia/Seoul"
+          },
+          "brief": {
+            "enabled": true,
+            "time": "10:00"
+          }
         }
       },
       "current_version": "v1",

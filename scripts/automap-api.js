@@ -1430,6 +1430,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* POST /api/dooray/bot-test — 봇 URL 로 실제 메시지를 보내본다.
+     저장만 하고 끝내면 잘못된 URL 을 며칠 뒤에야 알게 된다. */
+  if (req.method === 'POST' && url.pathname === '/api/dooray/bot-test') {
+    readBody(req).then(async raw => {
+      const body = JSON.parse(raw || '{}');
+      const nn = resolveUserNN(req, body.userNN);
+      if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+      let botUrl = String(body.botUrl || '').trim();
+      if (!botUrl) {
+        try { botUrl = JSON.parse(fs.readFileSync(`/opt/openclaw/data/user${nn}/integrations.json`, 'utf8'))?.dooray?.botUrl || ''; } catch {}
+      }
+      if (!botUrl) { jsonRes(res, 400, { ok: false, error: '봇 URL 이 없습니다' }); return; }
+      try {
+        const r = await fetch(botUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botName: 'TideClaw', text: '연결 테스트입니다. 이 메시지가 보이면 알림이 정상입니다 ✅' }),
+        });
+        if (!r.ok) { jsonRes(res, 200, { ok: false, error: `두레이가 거절했습니다 (HTTP ${r.status})` }); return; }
+        jsonRes(res, 200, { ok: true });
+      } catch (e) { jsonRes(res, 200, { ok: false, error: e.message }); }
+    }).catch(e => jsonRes(res, 500, { ok: false, error: e.message }));
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/users') {
     const auth = getAuthSession(req);
     if (!auth) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
@@ -4313,6 +4338,15 @@ const server = http.createServer(async (req, res) => {
       let existing = {};
       try { existing = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
       if (data.dooray) {
+        // 봇 URL 형식 검증 — 잘못 붙여넣으면 알림이 조용히 안 온다. 며칠 뒤에야 안다(실측).
+        if (data.dooray.botUrl) {
+          const u = String(data.dooray.botUrl).trim();
+          if (!/^https:\/\/[a-z0-9.-]*dooray\.com\/services\/\d+\/\d+\/\S+$/i.test(u)) {
+            jsonRes(res, 400, { ok: false, error: '봇 URL 형식이 아닙니다. 두레이에서 발급한 "서비스 후크 URL" 을 그대로 붙여넣어주세요' });
+            return;
+          }
+          data.dooray.botUrl = u;
+        }
         existing.dooray = { ...existing.dooray, ...data.dooray, updatedAt: new Date().toISOString() };
         if (data.dooray.token) {
           try {
@@ -4375,7 +4409,7 @@ const server = http.createServer(async (req, res) => {
       let data = {};
       try { data = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
       const safe = {};
-      if (data.dooray) safe.dooray = { token: data.dooray.token ? '••••' + data.dooray.token.slice(-4) : '', memberId: data.dooray.memberId || '', memberName: data.dooray.memberName || '', updatedAt: data.dooray.updatedAt || '' };
+      if (data.dooray) safe.dooray = { token: data.dooray.token ? '••••' + data.dooray.token.slice(-4) : '', memberId: data.dooray.memberId || '', memberName: data.dooray.memberName || '', botUrl: data.dooray.botUrl || '', updatedAt: data.dooray.updatedAt || '' };
       if (data.github) safe.github = { owner: data.github.owner || '', repo: data.github.repo || '', token: data.github.token ? '••••' + data.github.token.slice(-4) : '', updatedAt: data.github.updatedAt || '' };
       if (data.figma) safe.figma = { token: data.figma.token ? '••••' + data.figma.token.slice(-4) : '', handle: data.figma.handle || '', expiresAt: data.figma.expiresAt || '', fileKeys: data.figma.fileKeys || [], updatedAt: data.figma.updatedAt || '' };
       jsonRes(res, 200, { ok: true, data: safe });

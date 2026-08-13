@@ -16,6 +16,10 @@ function expiryFromDays(days: string): string {
 export function IntegrationsPage() {
   const [intState, setIntState] = useState<any>({ dooray: null, github: null, loading: true });
   const [doorayToken, setDoorayToken] = useState('');
+  /* 봇 URL — 알림이 나가는 주소. 없으면 아침 브리핑도 두레이 수신도 동작하지 않는다 */
+  const [botUrl, setBotUrl] = useState('');
+  const [botMsg, setBotMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [botBusy, setBotBusy] = useState(false);
   const [ghOwner, setGhOwner] = useState('');
   const [ghToken, setGhToken] = useState('');
   const [ghRepo, setGhRepo] = useState('');
@@ -50,6 +54,32 @@ export function IntegrationsPage() {
       const d = await r.json();
       if (d.ok) { setDoorayToken(''); await loadInt(); } else alert('저장 실패: ' + (d.error || ''));
     } catch (err: any) { alert('오류: ' + err.message); } finally { setSaving(''); }
+  };
+
+  const saveBotUrl = async () => {
+    const v = botUrl.trim();
+    if (!v) { setBotMsg({ ok: false, text: '봇 URL 을 입력해주세요' }); return; }
+    setBotBusy(true); setBotMsg(null);
+    try {
+      const r = await fetch('/api/integrations/save', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dooray: { botUrl: v }, userNN: getUserNN() }),
+      });
+      const d = await r.json();
+      if (!d.ok) { setBotMsg({ ok: false, text: d.error || '저장 실패' }); return; }
+      // 저장만 하고 끝내면 잘못된 URL 을 며칠 뒤에야 안다 — 바로 보내본다
+      const t = await fetch('/api/dooray/bot-test', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botUrl: v, userNN: getUserNN() }),
+      }).then(x => x.json());
+      setBotMsg(t.ok
+        ? { ok: true, text: '두레이로 테스트 메시지를 보냈습니다. 확인해주세요' }
+        : { ok: false, text: `저장은 됐지만 발송에 실패했습니다 — ${t.error || ''}` });
+      await loadInt();
+    } catch (e) { setBotMsg({ ok: false, text: String(e) }); }
+    finally { setBotBusy(false); }
   };
 
   const deleteDooray = async () => {
@@ -205,6 +235,38 @@ export function IntegrationsPage() {
                       <span className="text-xs text-text-secondary">{new Date(intState.dooray.updatedAt).toLocaleString('ko-KR')}</span>
                     </div>
                   )}
+                </div>
+                <div className="bg-background rounded-lg p-4 mb-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-text-primary">봇 URL</span>
+                    {intState.dooray.botUrl
+                      ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">등록됨</span>
+                      : <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">필요</span>}
+                  </div>
+                  <p className="text-[11px] text-text-secondary mb-2">
+                    아침 브리핑과 작업 완료 알림이 이 주소로 갑니다. 등록하지 않으면 두레이로 지시하는 것도 동작하지 않습니다.
+                  </p>
+                  <div className="flex gap-2">
+                    <input value={botUrl || intState.dooray.botUrl || ''} onChange={(e) => setBotUrl(e.target.value)}
+                      placeholder="https://tideflo.dooray.com/services/..."
+                      className="flex-1 px-3 py-2 bg-card border border-border-color rounded-lg text-sm font-mono text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
+                    <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                      disabled={botBusy} onClick={saveBotUrl}>
+                      {botBusy ? '확인 중...' : '저장 + 테스트'}
+                    </button>
+                  </div>
+                  {botMsg && (
+                    <p className={`text-[11px] mt-2 ${botMsg.ok ? 'text-green-500' : 'text-red-500'}`}>{botMsg.text}</p>
+                  )}
+                  <details className="mt-2">
+                    <summary className="text-[11px] text-text-secondary cursor-pointer">봇 URL 받는 방법</summary>
+                    <ol className="text-[11px] text-text-secondary space-y-1 list-decimal list-inside mt-1">
+                      <li>두레이 메신저에서 나와의 대화 열기</li>
+                      <li>우측 상단 설정 → 봇 추가</li>
+                      <li>이름을 정하고 추가하면 나오는 <b>서비스 후크 URL</b> 복사</li>
+                      <li>여기에 붙여넣고 [저장 + 테스트]</li>
+                    </ol>
+                  </details>
                 </div>
                 <button className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors" disabled={saving === 'dooray-del'} onClick={deleteDooray}>
                   {saving === 'dooray-del' ? '해제 중...' : '연동 해제'}
