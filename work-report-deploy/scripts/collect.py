@@ -182,13 +182,43 @@ def is_others_approval(subject, member_name):
     return not (member_name and member_name in (subject or ""))
 
 
+MAIL_API = "http://172.18.0.1:18799/api/mail/search"
+MAIL_MAX = 100
+# 사람이 쓴 메일이 아니다 — 시스템 알림·결재 시스템·모니터링
+RE_MAIL_BOT = re.compile(r"dooray!?\s*notification|whatap|docswave|no-?reply@|noreply@", re.I)
+# 일정 응답 알림·타인의 주간보고 — 내 업무가 아니다
+RE_MAIL_NOISE = re.compile(r"^(수락함|거절함|미정)\s*:|^\[?주간보고\]?[\[\s]")
+
+
 def collect_gmail(date_from, date_to, member_name=None):
-    ok, d = _run(f'gog mail search "after:{date_from} before:{date_to}" --max 50')
+    """호스트 API 로 조회한다.
+
+    ⚠ `gog mail search` 를 쓰면 안 된다 — 같은 조건에서 **9건**만 돌려준다.
+    실제로는 50건이 넘는다(실측 user13: API 50+ vs CLI 9). 조회 범위가 왜 좁은지는
+    CLI 내부 문제라 알 수 없고, 빠진 메일 중에 실제 업무 메일이 있었다
+    (오류 수정 요청·기능 업데이트 협의 등).
+    `before` 는 그날을 포함하지 않으므로 하루 더한다."""
+    end = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    cmd = ["curl", "-s", "-m", "40", "-G", MAIL_API,
+           "--data-urlencode", f"userNN={_self_nn()}",
+           "--data-urlencode", f"q=after:{date_from} before:{end}",
+           "--data-urlencode", f"max={MAIL_MAX}"]
+    try:
+        d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=60)))
+    except Exception:
+        return [], False
+    ok = bool(d.get("ok"))
     items = []
     for m in d.get("messages", []):
-        subject = m.get("subject") or ""
+        subject = (m.get("subject") or "").strip()
         sender = m.get("from") or ""
-        if is_ad_mail(subject, sender) or is_others_approval(subject, member_name):
+        if not subject:
+            continue                       # 제목 없는 초안
+        if RE_MAIL_BOT.search(sender) or is_ad_mail(subject, sender) \
+                or is_others_approval(subject, member_name):
+            continue
+        head = clean_title(subject)
+        if RE_MAIL_NOISE.match(subject) or (RE_MAIL_NOISE.match(head) and member_name not in subject):
             continue
         url = f"https://mail.google.com/mail/u/0/#all/{m.get('id')}"
         items.append(normalize_item(m, "gmail", None, url, "done"))
@@ -196,6 +226,10 @@ def collect_gmail(date_from, date_to, member_name=None):
 
 
 CALENDAR_API = "http://172.18.0.1:18799/api/calendar/search"
+
+
+def _self_nn():
+    return paths.self_nn() or ""
 
 
 def collect_calendar(nn, date_from, date_to, status="done"):

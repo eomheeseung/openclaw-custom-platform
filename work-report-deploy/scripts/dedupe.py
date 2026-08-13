@@ -37,6 +37,11 @@ def _close_in_time(a, b):
     return abs(da - db) <= timedelta(days=TIME_WINDOW_DAYS)
 
 
+def _score(it):
+    """대표 문장을 고를 때 깨진 글자(U+FFFD)가 있는 것을 뒤로 민다."""
+    return ("\ufffd" in (it.get("text") or ""), -len(it.get("text") or ""))
+
+
 def merge_duplicates(items):
     out = []
     for it in items:
@@ -49,6 +54,11 @@ def merge_duplicates(items):
             target["sources"].append({"source": it["source"], "url": it.get("url")})
             if it.get("status") == "wip":  # 진행중이 하나라도 있으면 완료로 단정하지 않는다
                 target["status"] = "wip"
+            # 같은 건이 여러 통 오면 글자가 깨지지 않은 제목을 대표로 쓴다
+            if _score(it) < _score(target):
+                target["text"] = it["text"]
+                if it.get("raw_text"):
+                    target["raw_text"] = it["raw_text"]
         else:
             new = dict(it)
             new["sources"] = [{"source": it["source"], "url": it.get("url")}]
