@@ -105,6 +105,53 @@ def due_tasks(nn, today):
     return sorted(out)
 
 
+HOLIDAY_CAL = "ko.south_korea#holiday@group.v.calendar.google.com"
+
+# 요일마다 다른 인사 — 매일 같은 문장이면 사흘 만에 안 읽는다
+CLOSING = {
+    0: "한 주 시작이네요. 가볍게 가봐요 🌱",
+    1: "오늘도 좋은 하루 보내세요 ☕",
+    2: "벌써 반이 지났어요. 천천히 하나씩 🐢",
+    3: "조금만 더 힘내요 💪",
+    4: "금요일이에요! 마무리 잘 해봐요 🎉",
+    5: "주말에도 고생이 많아요 🍀",
+    6: "주말에도 고생이 많아요 🍀",
+}
+
+
+def day_off(nn, today, events):
+    """오늘 쉬는 날이면 브리핑을 보내지 않는다.
+    공휴일은 구글 공휴일 달력, 휴가는 본인 달력의 연차·반차 일정으로 판단한다."""
+    for title in events:
+        # 반차는 반나절 근무라 브리핑이 필요하다 — 종일 휴가만 건너뛴다
+        if collect.RE_CAL_LEAVE.search(title) and "반차" not in title:
+            return f"휴가({title})"
+    cmd = ["curl", "-s", "-m", "20", "-X", "POST", "-H", "Content-Type: application/json",
+           "-d", json.dumps({"userNN": nn, "timeMin": today, "timeMax": today,
+                             "calendarId": HOLIDAY_CAL}, ensure_ascii=False),
+           collect.CALENDAR_API]
+    try:
+        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout)
+    except Exception:
+        return ""                      # 공휴일 조회 실패로 브리핑을 막지는 않는다
+    for e in d.get("events", []):
+        if (e.get("start") or "")[:10] == today:
+            return f"공휴일({e.get('title')})"
+    return ""
+
+
+def raw_titles(nn, today):
+    """필터 전 원본 제목 — 휴가 판단에 쓴다 (표시용 목록은 휴가를 걸러낸다)."""
+    cmd = ["curl", "-s", "-m", "30", "-X", "POST", "-H", "Content-Type: application/json",
+           "-d", json.dumps({"userNN": nn, "timeMin": today, "timeMax": today}, ensure_ascii=False),
+           collect.CALENDAR_API]
+    try:
+        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=40).stdout)
+    except Exception:
+        return []
+    return [(e.get("title") or "").strip() for e in d.get("events", [])]
+
+
 SR_API_LIMIT = 200
 
 
@@ -167,27 +214,35 @@ def compose(nn, now):
 
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
     ev2 = today_events(nn, tomorrow)
+    lines += ["", "■ 내일 일정"]
     if ev2:
-        lines += ["", "■ 내일 일정"]
         lines += [f"· {h} {t}" for h, t in ev2[:TOMORROW_MAX]]
         if len(ev2) > TOMORROW_MAX:
             lines.append(f"· 외 {len(ev2) - TOMORROW_MAX}건")
+    else:
+        lines.append("· 일정 없음")
 
 
-    for name, new_today, open_cnt in sr_summary(nn, today):
-        lines += ["", f"■ SR · {name}"]
-        for i in new_today[:3]:
-            lines.append(f"· 신규 {i.get('sr_no')} {i.get('title','')[:40]}")
-        if open_cnt:
-            lines.append(f"· 미처리 {open_cnt}건")
+    srs = sr_summary(nn, today)
+    lines += ["", "■ SR"]
+    if srs:
+        for name, new_today, open_cnt in srs:
+            for i in new_today[:3]:
+                lines.append(f"· 신규 {i.get('sr_no')} {i.get('title','')[:40]}")
+            lines.append(f"· {name} 미처리 {open_cnt}건" if open_cnt else f"· {name} 미처리 없음")
+    else:
+        lines.append("· 없음")
 
     tasks = due_tasks(nn, today)
+    lines += ["", "■ 마감 임박"]
     if tasks:
-        lines += ["", "■ 마감 임박"]
         lines += [f"· {due[5:]} {name} — {subj}" for due, name, subj in tasks[:TASK_MAX]]
         if len(tasks) > TASK_MAX:
             lines.append(f"· 외 {len(tasks) - TASK_MAX}건")
+    else:
+        lines.append("· 없음")
 
+    lines += ["", CLOSING.get(now.weekday(), CLOSING[1])]
     return "\n".join(lines)
 
 
@@ -235,6 +290,11 @@ if __name__ == "__main__":
         ok, why = should_send(nn, now)
         if not ok:
             print(json.dumps({"ok": True, "skipped": why}, ensure_ascii=False))
+            sys.exit(0)
+        off = day_off(nn, now.strftime("%Y-%m-%d"), raw_titles(nn, now.strftime("%Y-%m-%d")))
+        if off:
+            mark_sent(nn, now)     # 오늘은 안 보낸다 — 30분 뒤에 다시 묻지 않게 표시만 남긴다
+            print(json.dumps({"ok": True, "skipped": off}, ensure_ascii=False))
             sys.exit(0)
 
     text = compose(nn, now)

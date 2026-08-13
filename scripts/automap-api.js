@@ -945,7 +945,10 @@ const server = http.createServer(async (req, res) => {
       const qs = new URLSearchParams({
         timeMin: tMin, timeMax: tMax, singleEvents: 'true', orderBy: 'startTime', maxResults: '250',
       });
-      const apiUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${qs}`;
+      // 공휴일 달력(ko.south_korea#holiday@group.v.calendar.google.com)을 조회하려면
+      // calendarId 를 받아야 한다 — 브리핑이 휴일에 안 오게 하는 데 쓴다.
+      const calId = encodeURIComponent(body.calendarId || 'primary');
+      const apiUrl = `https://www.googleapis.com/calendar/v3/calendars/${calId}/events?${qs}`;
       const out = await gmailApiRequest('GET', apiUrl, accessToken);   // 같은 OAuth 토큰을 쓴다
       if (out.status >= 400) { jsonRes(res, out.status, { ok: false, error: out.data?.error?.message || 'calendar api error' }); return; }
       const events = (out.data?.items || []).map(e => ({
