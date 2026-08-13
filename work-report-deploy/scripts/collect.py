@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
@@ -356,6 +357,73 @@ def collect_github(owner, date_from, date_to, token=None, author=None):
 FIGMA_API = "https://api.figma.com"
 
 
+# 피그마가 자동으로 붙이는 이름 — 무엇을 했는지 알려주지 않는다
+RE_FIG_AUTONAME = re.compile(
+    r"^(frame|group|rectangle|ellipse|vector|line|image|component|instance|slide)\b[\s\d:.-]*$", re.I)
+FIG_PAGE_MAX = 3         # 파일당 보고할 페이지 수 (변경이 많은 순)
+FIG_NAME_MAX = 3         # 한 줄에 나열할 프레임 이름 수
+
+
+def _fig_get(token, url, timeout=60):
+    cmd = ["curl", "-s", "-m", str(timeout - 5), "-H", f"X-Figma-Token: {token}", url]
+    try:
+        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout)
+    except Exception:
+        return None
+    return None if d.get("status") else d
+
+
+def _fig_versions(token, key, date_from):
+    """보고 기간 시작 이전 버전이 나올 때까지 거슬러 올라간다.
+    한 번에 30개씩만 오므로(실측) 페이지를 넘겨야 기준점을 잡을 수 있다."""
+    url = f"{FIGMA_API}/v1/files/{key}/versions?page_size=30"
+    out = []
+    for _ in range(6):                       # 180개면 몇 달치다 — 그보다 오래 거슬러 갈 일은 없다
+        d = _fig_get(token, url, timeout=45)
+        if not d:
+            break
+        vs = d.get("versions") or []
+        out += vs
+        if not vs or (vs[-1].get("created_at") or "")[:10] < date_from:
+            break
+        nxt = ((d.get("pagination") or {}).get("next_page") or "")
+        if not nxt:
+            break
+        url = urllib.parse.quote(nxt, safe=":/?&=")   # 응답 URL 에 공백이 섞여 온다
+    return out
+
+
+def _fig_tree(token, key, version_id):
+    """그 시점의 페이지 → 최상위 프레임 이름. depth=2 면 1MB 안쪽이다(실측)."""
+    d = _fig_get(token, f"{FIGMA_API}/v1/files/{key}?depth=2&version={version_id}", timeout=60)
+    if not d:
+        return None
+    out = {}
+    for pg in (d.get("document") or {}).get("children") or []:
+        out[pg.get("id")] = {
+            "name": pg.get("name") or "",
+            "kids": {k.get("id"): (k.get("name") or "") for k in (pg.get("children") or [])},
+        }
+    return out
+
+
+def _fig_diff(old, new):
+    """페이지별 추가·삭제·이름변경. 프레임 **내부** 수정은 이름이 그대로라 잡히지 않는다 —
+    피그마에 버전 간 비교 API 가 없어 여기까지가 한계다."""
+    pages = []
+    for pid, pg in (new or {}).items():
+        before = (old or {}).get(pid, {}).get("kids", {})
+        after = pg.get("kids", {})
+        named = lambda v: v and not RE_FIG_AUTONAME.match(v)
+        # 같은 이름의 프레임이 여러 개인 경우가 흔하다 — 이름 기준으로 한 번만 센다
+        added = sorted({v for k, v in after.items() if k not in before and named(v)})
+        renamed = sorted({after[k] for k in after
+                          if k in before and before[k] != after[k] and named(after[k])})
+        if added or renamed:
+            pages.append({"page": pg.get("name") or "", "added": added, "renamed": renamed})
+    return sorted(pages, key=lambda x: -(len(x["added"]) + len(x["renamed"])))
+
+
 def collect_figma(nn, date_from, date_to):
     """등록된 파일의 버전 이력에서 **본인 편집만** 골라 파일당 한 줄로 낸다.
 
@@ -393,13 +461,39 @@ def collect_figma(nn, date_from, date_to):
                 and in_period(v.get("created_at"), date_from, date_to)]
         if not mine:
             continue
-        # 파일당 한 줄 — 횟수는 세지 않는다. 편집한 사실만 남기면 된다.
         latest = max(mine, key=lambda v: v.get("created_at") or "")
         label = (latest.get("label") or "").strip()
-        items.append(normalize_item(
-            {"title": f"{name} 시안 편집" + (f" ({label})" if label else ""),
-             "date": latest.get("created_at")},
-            "figma", None, f"https://www.figma.com/design/{key}", "done", project=name))
+
+        # 버전 이름이 거의 비어 있어(자동 저장) '무엇을 했는지'는 이력에 없다.
+        # 기간 시작 시점과 지금의 파일 구조를 비교해 프레임 단위로 알아낸다.
+        detail = ""
+        allv = _fig_versions(token, key, date_from)
+        base = next((v for v in allv if (v.get("created_at") or "")[:10] < date_from), None)
+        if base:
+            old = _fig_tree(token, key, base.get("id"))
+            new = _fig_tree(token, key, latest.get("id"))
+            if old is None or new is None:
+                ok_all = False
+            else:
+                pages = _fig_diff(old, new)
+
+        url = f"https://www.figma.com/design/{key}"
+        if pages:
+            # 페이지 하나가 곧 한 덩어리의 작업이다 — 파일당 한 줄로 뭉치면
+            # "시안 편집" 과 다를 바 없어진다.
+            for pg in pages[:FIG_PAGE_MAX]:
+                names = pg["added"] + pg["renamed"]
+                head = ", ".join(names[:FIG_NAME_MAX])
+                more = f" 외 {len(names) - FIG_NAME_MAX}건" if len(names) > FIG_NAME_MAX else ""
+                items.append(normalize_item(
+                    {"title": f"{name} · {pg['page']} — {head}{more}",
+                     "date": latest.get("created_at")},
+                    "figma", None, url, "done", project=name))
+        else:
+            items.append(normalize_item(
+                {"title": f"{name} 시안 편집" + (f" ({label})" if label else ""),
+                 "date": latest.get("created_at")},
+                "figma", None, url, "done", project=name))
     return items, ok_all
 
 
