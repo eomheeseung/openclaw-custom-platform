@@ -59,7 +59,13 @@ def _restore_from(new, origin):
 
 
 def apply(draft, edits):
+    """되돌려주는 값에 **최종 문장**을 함께 담는다.
+
+    자동 교정 때문에 모델이 보낸 문장과 저장된 문장이 달라진다. 그러면 모델이
+    "안 반영됐다" 고 보고 같은 요청을 다섯 번씩 다시 보낸다(실측: 450초 낭비).
+    최종 문장을 알려주면 다시 보낼 이유가 없어진다."""
     changed, dropped, unknown = 0, 0, []
+    applied, corrected = {}, []
     for key, val in (edits or {}).items():
         try:
             n = int(key)
@@ -94,10 +100,13 @@ def apply(draft, edits):
             fixed = verify_draft.fix_typos(fixed)
             fixed = _restore_from(fixed, origin)
             it["text"] = fixed
+            if fixed != new:
+                corrected.append({"n": n, "보낸값": new, "저장값": fixed})
         if val.get("status") in STATUS:
             it["status"] = val["status"]
+        applied[str(n)] = it["text"]
         changed += 1
-    return changed, dropped, unknown
+    return changed, dropped, unknown, applied, corrected
 
 
 def add(draft, section, text):
@@ -145,7 +154,12 @@ if __name__ == "__main__":
     except json.JSONDecodeError as e:
         print(json.dumps({"ok": False, "error": f"JSON 이 아닙니다: {e}"}, ensure_ascii=False))
         sys.exit(2)
-    changed, dropped, unknown = apply(draft, edits)
+    changed, dropped, unknown, applied, corrected = apply(draft, edits)
     save(nn, week, draft)
-    print(json.dumps({"ok": True, "changed": changed, "dropped": dropped,
-                      "unknown": unknown}, ensure_ascii=False))
+    out = {"ok": True, "changed": changed, "dropped": dropped, "unknown": unknown,
+           "저장된_문장": applied}
+    if corrected:
+        # 깨진 글자를 되돌린 건 정상 동작이다 — 다시 보내지 말라고 명시한다
+        out["자동교정"] = corrected
+        out["안내"] = "깨진 글자를 원문으로 되돌렸습니다. 정상이니 다시 보내지 마세요."
+    print(json.dumps(out, ensure_ascii=False))
