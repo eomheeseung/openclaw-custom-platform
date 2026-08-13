@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ConnectionStatus, Agent, Session, ProtocolFrame } from '../types';
 import { shouldHideMessage } from '../utils/messageFilter';
 import { resolveAgentFor } from '../utils/agentRouting';
-import { FINISH_HINT } from '../utils/messageFilter';
+import { FINISH_HINT, isConfirmRequest } from '../utils/messageFilter';
 
 interface UseWebSocketProps {
   url: string;
@@ -901,7 +901,7 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
     const routedId = autoAgent?.id || mentionTargetId;
     /* ⚠ 업무보고에만 붙인다. 사업 주간보고에는 finish.py 가 없어서
        없는 파일을 찾느라 오히려 헤맨다(스크립트: weekly_report/sr_fetch/hwpx_gen). */
-    if (routedId === 'work-report') {
+    if (routedId === 'work-report' && !isConfirmRequest(finalMessage)) {
       finalMessage = `${finalMessage}\n\n${FINISH_HINT}`;
     }
 

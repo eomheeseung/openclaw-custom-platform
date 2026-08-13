@@ -103,6 +103,13 @@ export const FINISH_HINT = [
   '   (사용자 번호·주차는 스크립트가 알아서 정한다. 출력을 그대로 내보내고 네 말로 다시 쓰지 마라)',
 ].join('\n');
 
+/* 확정·발송 요청에는 마무리 지시를 붙이면 안 된다 — "마무리는 finish.py 하나다" 가
+   같이 실려 가면 발송 대신 초안 카드를 다시 만든다(실측: 확정을 눌렀는데 카드가 또 나왔다). */
+const CONFIRM_RE = /(확정|발송|메일\s*(보내|발송|전송)|전송해)/;
+export function isConfirmRequest(text: string): boolean {
+  return CONFIRM_RE.test(text || '');
+}
+
 const KIND_CARD_RE = /^\s*(?:```json\s*)?\[?\s*\{\s*"kind"\s*:/;
 
 /** 펜스 뒤에 **파싱되는 JSON** 이 실제로 있어야 카드로 인정한다.
