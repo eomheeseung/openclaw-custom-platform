@@ -28,14 +28,14 @@ function Row({ it, alias }: { it: Item; alias?: string }) {
   /* carry(이월)·직접 입력(ai) 은 출처 없음이 정상 — 경고는 그 외에만 */
   const warn = unsourced && !it.carry;
   return (
-    <div className={`flex items-baseline gap-2 px-4 py-1 text-xs ${warn ? 'bg-amber-500/[0.06]' : ''}`}>
+    <div className={`flex items-baseline gap-2 px-5 py-1.5 text-sm ${warn ? 'bg-amber-500/[0.06]' : ''}`}>
       <span className="flex-1 leading-snug">
-        {alias && <span className="text-accent/70 text-[10px] font-bold mr-1">[{alias}]</span>}
+        {alias && <span className="text-accent/70 text-[11px] font-bold mr-1">[{alias}]</span>}
         {it.text}
         {it.merged_count ? <span className="ml-1 text-[9px] text-text-secondary">묶음</span> : null}
         {it.carry ? <span className="ml-1 text-[8.5px] text-accent/60">· 지난주 예정 → 계속</span> : null}
       </span>
-      <span className="text-[9px] whitespace-nowrap flex-shrink-0">
+      <span className="text-[10.5px] whitespace-nowrap flex-shrink-0">
         {(it.sources || []).map((s, i) => (
           s.url
             ? <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
@@ -78,12 +78,12 @@ export const WorkDraftCard = memo(function WorkDraftCard({
   const emptyBiz = d.businesses.filter(b => b.items.length === 0);
 
   return (
-    <div className="my-3 rounded-2xl border border-accent/25 bg-white max-w-2xl overflow-hidden">
-      <div className="bg-accent/[0.07] px-4 py-2.5 flex justify-between items-baseline">
-        <span className="text-sm font-bold text-accent flex items-center gap-1.5">
-          <FileText className="w-4 h-4" /> 업무보고 초안
+    <div className="my-3 rounded-2xl border border-accent/25 bg-white max-w-4xl overflow-hidden">
+      <div className="bg-accent/[0.07] px-5 py-3 flex justify-between items-baseline">
+        <span className="text-base font-bold text-accent flex items-center gap-1.5">
+          <FileText className="w-[18px] h-[18px]" /> 업무보고 초안
         </span>
-        <span className="text-[10px] text-text-secondary">
+        <span className="text-[11.5px] text-text-secondary">
           {d.period}{d.generated_at ? ` · ${d.generated_at.slice(5, 16).replace('T', ' ')} 생성` : ''}
         </span>
       </div>
@@ -97,12 +97,12 @@ export const WorkDraftCard = memo(function WorkDraftCard({
 
       <div className="flex border-b border-border-color/60 text-center">
         <div className="flex-1 py-2 border-r border-border-color/60">
-          <div className="text-base font-extrabold text-accent">{done.length}</div>
-          <div className="text-[9.5px] text-text-secondary">완료</div>
+          <div className="text-xl font-extrabold text-accent">{done.length}</div>
+          <div className="text-[11px] text-text-secondary">완료</div>
         </div>
         <div className="flex-1 py-2">
-          <div className="text-base font-extrabold text-accent">{next.length}</div>
-          <div className="text-[9.5px] text-text-secondary">진행 · 차주</div>
+          <div className="text-xl font-extrabold text-accent">{next.length}</div>
+          <div className="text-[11px] text-text-secondary">진행 · 차주</div>
         </div>
       </div>
 
@@ -142,7 +142,7 @@ export const WorkDraftCard = memo(function WorkDraftCard({
           className="px-3 py-1.5 text-xs border border-border-color rounded-lg text-text-secondary flex items-center gap-1 flex-shrink-0">
           <RotateCcw className="w-3 h-3" /> 초기화
         </button>
-        <span className="text-[9.5px] text-text-secondary flex-1">✏️ 수정은 채팅으로 · 화면에 보이는 그대로 메일이 됩니다</span>
+        <span className="text-[11px] text-text-secondary flex-1">✏️ 수정은 채팅으로 · 화면에 보이는 그대로 메일이 됩니다</span>
         <button onClick={() => onSelect?.('업무보고 초안 확정. 메일 발송 준비해줘')}
           className="px-4 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white font-semibold rounded-lg flex items-center gap-1 flex-shrink-0">
           <CheckCircle2 className="w-3.5 h-3.5" /> 확정
