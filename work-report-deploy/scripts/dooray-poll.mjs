@@ -356,10 +356,12 @@ async function pollUser(u, state) {
     const body = [
       `[두레이] ${text}`,
       "",
-      "↳ 두레이에서 온 요청이다. 답한 뒤 반드시 두레이로도 회신해라:",
-      `   exec: python3 /home/node/documents/work-report/scripts/notify.py ${u.nn} "3줄 이내 요약"`,
-      `   카드(work-draft 등)는 두레이로 보내지 마. 대신 이 링크를 회신에 그대로 붙여라:`,
-      `   ${webLink(u.nn, key0)}`,
+      "↳ 두레이에서 온 요청이다.",
+      `   주간보고 작업이면 마무리에 --dooray 를 붙여라 (회신까지 한 번에 처리된다):`,
+      `   exec: python3 /home/node/documents/work-report/scripts/finish.py ${u.nn} <주차> --dooray`,
+      `   그 밖의 일반 대화는 답한 뒤 아래로 회신해라 (3줄 이내, 따옴표 쓰지 마):`,
+      `   exec: python3 /home/node/documents/work-report/scripts/notify.py ${u.nn} 요약문`,
+      `   카드는 두레이로 보내지 마. 웹 링크: ${webLink(u.nn, key0)}`,
     ].join("\n");
     const ok = await sendToSession(u.nn, body, key0, null);
     if (!ok) {
