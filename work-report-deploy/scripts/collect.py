@@ -114,6 +114,9 @@ def dooray_projects():
 
 
 WIP_STALE_DAYS = 28       # 진행중 task 를 '살아있다'고 볼 최대 방치 기간
+# "8월 2주차 보고" — 주간보고를 쓰는 업무 자체다. 주간보고에 적을 내용이 아니다.
+# 실측: 김다영 8건 전부, 김예림 5건 중 4건이 이것이었다(모두 '전략사업팀-보고관리').
+RE_REPORT_TASK = re.compile(r"^\s*\d{1,2}월\s*\d\s*주차\s*보고\s*$")
 
 
 def _days_before(date_str, days):
@@ -130,24 +133,64 @@ def in_period(at, date_from, date_to):
     return date_from <= d <= date_to
 
 
-def collect_dooray(date_from, date_to, member_id=None):
+MEMBER_NAME = {"value": ""}          # collect() 가 채운다
+
+
+def member_name_hit(x):
+    n = MEMBER_NAME["value"]
+    return bool(n) and n in str(x)
+
+
+def collect_dooray(date_from, date_to, member_id=None, owned=None):
+    """본인 담당 task + **담당자가 없는 내 사업 task**.
+
+    ⚠ 담당자 필터만 쓰면 안 된다 — 사내에서 담당자를 지정하지 않고 쓰는 프로젝트가 많다.
+    실측(user13): 2026년 사업 프로젝트 20건 중 담당자가 지정된 건 2건뿐이었고,
+    본인 담당으로 조회하니 0건이었다. 실제로는 그 주에 11건이 갱신돼 있었고
+    메일 내용과 그대로 겹쳤다(보건소 자료 추출·인수인계·개인정보 파기 요청).
+
+    그래서 담당자가 **없는** task 는 내가 그 사업의 주담당(owners)일 때만 가져온다.
+    지원(supporters)일 뿐이면 남의 일이 섞이므로 가져오지 않는다.
+    """
+    from classify import business_for_container
     projects, ok_all = dooray_projects()
     if not ok_all:
         return [], False
     member = member_id or ""      # 생략 시 CLI 가 본인 담당 자동 적용
-    items = []
+    owned = owned or []           # 내가 주담당인 사업 목록
+    items, seen = [], set()
     for p in projects:
         pid, pname = p.get("id"), p.get("name")
+        biz = business_for_container(pname, owned) if owned else None
         for status, mapped in (("done", "done"), ("working", "wip")):
-            ok, d = _run(f"dooray tasks {pid} 50 {status} {member}".strip())
+            # 내 사업이면 담당자 무관하게 받아 오고(all), 아래에서 담당자 있는 것만 걸러낸다
+            args = f"{pid} 50 {status}" + (' "" "" all' if biz else f" {member}")
+            ok, d = _run(f"dooray tasks {args}".strip())
             ok_all = ok_all and ok
             for t in d.get("tasks", []):
+                # all 은 status 인자를 무시하고 전부 준다 — 같은 task 가 두 번 들어온다
+                if t.get("id") in seen:
+                    continue
+                seen.add(t.get("id"))
+                if biz:
+                    # 담당자가 지정돼 있으면 내 것만
+                    to = [str(x) for x in ((t.get("users") or {}).get("to") or [])]
+                    if to and not any(member_name_hit(x) for x in to):
+                        continue
+                    # 담당자가 없는 task 는 '누가 했는지' 근거가 갱신 시각뿐이다.
+                    # 방치된 진행중 task 까지 넣으면 지난 몇 달치가 딸려온다(실측 39건).
+                    if not in_period(t.get("updatedAt"), date_from, date_to):
+                        continue
+                    mapped = {"done": "done", "closed": "done"}.get(
+                        t.get("workflowClass"), "wip")
                 it = normalize_item(t, "dooray", None,
                                     f"https://tideflo.dooray.com/task/{pid}/{t.get('id')}",
                                     mapped, project=pname, project_id=pid)
                 # 완료(done)는 이번 주에 끝낸 것만.
                 # 진행중(wip)은 이번 주 갱신이 없어도 '계속 하는 일'이라 남기되,
                 # 최근 갱신분까지만 — 실측상 1년 넘게 열려만 있는 방치 task 가 다수다.
+                if RE_REPORT_TASK.match(it["text"]):
+                    continue
                 lo = date_from if mapped == "done" else _days_before(date_from, WIP_STALE_DAYS)
                 if not in_period(it["at"], lo, date_to):
                     continue
@@ -187,7 +230,10 @@ MAIL_MAX = 100
 # 사람이 쓴 메일이 아니다 — 시스템 알림·결재 시스템·모니터링
 RE_MAIL_BOT = re.compile(r"dooray!?\s*notification|whatap|docswave|no-?reply@|noreply@", re.I)
 # 일정 응답 알림·타인의 주간보고 — 내 업무가 아니다
-RE_MAIL_NOISE = re.compile(r"^(수락함|거절함|미정)\s*:|^\[?주간보고\]?[\[\s]")
+RE_MAIL_NOISE = re.compile(
+    r"^(업데이트된\s*)?(초대장|초대)\s*:|^(수락함|거절함|미정|취소됨)\s*:|^\[?주간보고\]?[\[\s]")
+# 외부 업체 영업 메일. 사내(@tideflo.com) 발신은 대상에서 뺀다 — 오탐 방지
+RE_MAIL_SALES = re.compile(r"안녕하세요.{0,20}입니다|안내의\s*건|안내\s*드립니다|소개\s*드립니다")
 
 
 def collect_gmail(date_from, date_to, member_name=None):
@@ -219,6 +265,8 @@ def collect_gmail(date_from, date_to, member_name=None):
             continue
         head = clean_title(subject)
         if RE_MAIL_NOISE.match(subject) or (RE_MAIL_NOISE.match(head) and member_name not in subject):
+            continue
+        if "tideflo.com" not in sender and RE_MAIL_SALES.search(subject):
             continue
         url = f"https://mail.google.com/mail/u/0/#all/{m.get('id')}"
         items.append(normalize_item(m, "gmail", None, url, "done"))
@@ -565,8 +613,12 @@ def collect_figma(nn, date_from, date_to):
 
 
 def collect(tools, businesses, date_from, date_to, member_id=None,
-            github=None, figma_name=None, nn=None, member_email=None):
+            github=None, figma_name=None, nn=None, member_email=None, owner_nn=None):
     items, stats, failures = [], {}, []
+    # 주담당(owners)인 사업만 — 지원일 뿐인 사업의 무주공산 task 는 남의 일이다
+    owned_businesses = [b for b in (businesses or [])
+                        if owner_nn and owner_nn in (b.get("owners") or [])]
+    MEMBER_NAME["value"] = figma_name or ""      # 본인 이름 — task 담당자 대조에 쓴다
 
     def take(name, got, ok):
         items.extend(got)
@@ -575,7 +627,7 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
             failures.append(name)
 
     if tool_enabled(tools, "dooray"):
-        take("dooray", *collect_dooray(date_from, date_to, member_id))
+        take("dooray", *collect_dooray(date_from, date_to, member_id, owned=owned_businesses))
     if tool_enabled(tools, "gmail"):
         take("gmail", *collect_gmail(date_from, date_to, figma_name))
     if tool_enabled(tools, "calendar"):

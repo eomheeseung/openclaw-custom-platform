@@ -121,7 +121,8 @@ def build(nn, date_from, date_to):
         member_id=dooray_member,
         github=gh_cfg,
         figma_name=(cfg.get("profile") or {}).get("name"),
-        nn=nn, member_email=(integ.get("google") or {}).get("email") or cfg.get("email"))
+        nn=nn, member_email=(integ.get("google") or {}).get("email") or cfg.get("email"),
+        owner_nn=nn)
     items = classify(items, businesses)   # 사업 매핑: 등록ID → 프로젝트명 유사도 → 별칭 키워드
     items = drop_unmapped_personal_drive(items)
     items = merge_duplicates(items)
