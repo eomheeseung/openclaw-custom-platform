@@ -1037,6 +1037,50 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* PUT /api/work-report/draft — 카드에서 고친 항목을 초안 파일에 반영.
+     화면 편집을 모델에게 시키면 한글을 새로 써서 글자가 깨지고(업무→업묵) 출처가 사라진다(실측).
+     그래서 화면이 파일을 직접 고치고, 발송(send_report.py)은 그 파일만 읽는다.
+     ⚠ profile·recipients·period 는 절대 받지 않는다 — 화면에서 수신자를 바꿀 수 있으면
+       메일이 엉뚱한 곳으로 나간다. 서버에 있는 값을 그대로 둔다. */
+  if (req.method === 'PUT' && url.pathname === '/api/work-report/draft') {
+    const nn = resolveUserNN(req, url.searchParams.get('userNN'));
+    if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    const week = (url.searchParams.get('week') || '').trim();
+    if (!/^\d{4}-W\d{2}$/.test(week)) { jsonRes(res, 400, { ok: false, error: 'bad week' }); return; }
+    readBody(req).then(raw => {
+      const body = JSON.parse(raw || '{}');   // readBody 는 문자열을 준다
+      const p = `/opt/openclaw/data/user${nn}/work-report/drafts/draft-${week}.json`;
+      const cur = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const STATUS = new Set(['done', 'wip', 'next']);
+      const cleanItem = (it) => ({
+        text: String(it?.text || '').trim().slice(0, 300),
+        status: STATUS.has(it?.status) ? it.status : 'done',
+        // 출처는 화면에서 만들 수 없다 — 있는 것만 살린다 (증적을 지어내면 기관에 그대로 나간다)
+        sources: Array.isArray(it?.sources)
+          ? it.sources.filter(s => s && s.source).map(s => ({ source: String(s.source), url: s.url || null }))
+          : [],
+        ...(it?.carry ? { carry: true } : {}),
+        ...(it?.merged_count ? { merged_count: it.merged_count } : {}),
+      });
+      const cleanItems = (arr) => (Array.isArray(arr) ? arr : []).map(cleanItem).filter(x => x.text);
+      if (Array.isArray(body.businesses)) {
+        const byId = new Map(body.businesses.map(b => [String(b.id), b]));
+        // 사업 목록 자체는 서버 것을 쓴다 (화면에서 사업을 새로 만들 수는 없다)
+        cur.businesses = (cur.businesses || []).map(b => ({
+          ...b, items: cleanItems(byId.get(String(b.id))?.items),
+        }));
+      }
+      if (Array.isArray(body.common)) cur.common = cleanItems(body.common);
+      if (Array.isArray(body.ai)) cur.ai = cleanItems(body.ai);
+      cur.edited_at = new Date().toISOString();
+      const tmp = `${p}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(cur, null, 2));
+      fs.renameSync(tmp, p);   // 원자적 교체 — 발송이 반쯤 쓰인 파일을 읽지 않게
+      jsonRes(res, 200, { ok: true, draft: cur });
+    }).catch(e => jsonRes(res, e.code === 'ENOENT' ? 404 : 500, { ok: false, error: e.message }));
+    return;
+  }
+
   /* GET /api/work-report/config — 개인 설정 + 내 담당 사업(마스터 역참조) */
   if (req.method === 'GET' && url.pathname === '/api/work-report/config') {
     const nn = resolveUserNN(req, url);
@@ -1054,7 +1098,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'PUT' && url.pathname === '/api/work-report/config') {
     const nn = resolveUserNN(req, url);
     if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
-    readBody(req).then(body => {
+    readBody(req).then(raw => {
+      // readBody 는 문자열을 준다 — 파싱하지 않으면 body.tools 가 undefined 라
+      // 무엇을 보내도 조용히 아무것도 저장되지 않는다
+      const body = JSON.parse(raw || '{}');
       const p = `/opt/openclaw/data/user${nn}/work-report/config.json`;
       const cur = JSON.parse(fs.readFileSync(p, 'utf8'));
       if (Array.isArray(body.tools)) cur.tools = body.tools.filter(t => t !== 'sr');  /* SR 영구 차단 */

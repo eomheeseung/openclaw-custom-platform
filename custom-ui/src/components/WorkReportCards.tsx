@@ -1,10 +1,13 @@
-import { memo } from 'react';
-import { FileText, AlertTriangle, RotateCcw, CheckCircle2 } from 'lucide-react';
+import { memo, useState, useEffect, useRef, useCallback } from 'react';
+import { FileText, AlertTriangle, RotateCcw, CheckCircle2, X, Plus, Check } from 'lucide-react';
 
 /* work-draft — 업무보고 초안 카드 (보고서 미리보기형)
    비서가 draft-YYYY-Www.json 을 읽어 ```work-draft fence 로 재발행하면 렌더링된다.
    설계 원칙: 메일과 같은 구조(■ 완료 / ■ 진행·차주 / ■ AI 활용) · 청록 단색 ·
-   화면에서 본 것 = 발송되는 것. */
+   화면에서 본 것 = 발송되는 것.
+
+   수정·추가·삭제는 화면이 초안 파일을 직접 고친다(PUT /api/work-report/draft).
+   채팅으로 시키면 모델이 항목을 새로 써서 한글이 깨지고(업무→업묵) 출처가 사라진다(실측). */
 
 interface Src { source: string; url?: string | null }
 interface Item {
@@ -23,18 +26,90 @@ const TOOL_KO: Record<string, string> = {
   drive: '드라이브', github: 'GitHub', figma: 'Figma', carry: '이월',
 };
 
-function Row({ it, alias }: { it: Item; alias?: string }) {
+/** 사업 인덱스: -1 = 공통(사업 없음), -2 = AI 활용 */
+const COMMON = -1;
+const AI = -2;
+interface Ref { gi: number; ii: number }
+
+function Row({
+  it, alias, refr, editable, bizList, onEdit, onRemove, onStatus, onBiz,
+}: {
+  it: Item; alias?: string; refr: Ref; editable: boolean;
+  bizList: Array<{ alias: string; gi: number }>;
+  onEdit: (r: Ref, text: string) => void;
+  onRemove: (r: Ref) => void;
+  onStatus: (r: Ref, status: string) => void;
+  onBiz: (r: Ref, gi: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(it.text);
+  useEffect(() => { if (!editing) setDraft(it.text); }, [it.text, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const t = draft.trim();
+    if (t && t !== it.text) onEdit(refr, t);
+    else setDraft(it.text);
+  };
+
   const unsourced = !it.sources || it.sources.length === 0;
   /* carry(이월)·직접 입력(ai) 은 출처 없음이 정상 — 경고는 그 외에만 */
   const warn = unsourced && !it.carry;
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1.5 px-5 py-1">
+        <input
+          autoFocus value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { setDraft(it.text); setEditing(false); }
+          }}
+          className="flex-1 px-2 py-1 bg-white border border-accent/50 rounded text-sm
+                     focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className={`flex items-baseline gap-2 px-5 py-1.5 text-sm ${warn ? 'bg-amber-500/[0.06]' : ''}`}>
+    <div className={`group flex items-baseline gap-2 px-5 py-1.5 text-sm ${warn ? 'bg-amber-500/[0.06]' : ''}`}>
       <span className="flex-1 leading-snug">
         {alias && <span className="text-accent/70 text-[11px] font-bold mr-1">[{alias}]</span>}
-        {it.text}
+        {editable
+          ? <span onClick={() => setEditing(true)}
+                  className="cursor-text hover:bg-accent/[0.07] rounded px-1 -mx-1"
+                  title="클릭해서 수정">{it.text}</span>
+          : it.text}
         {it.merged_count ? <span className="ml-1 text-[9px] text-text-secondary">묶음</span> : null}
         {it.carry ? <span className="ml-1 text-[8.5px] text-accent/60">· 지난주 예정 → 계속</span> : null}
       </span>
+
+      {editable && (
+        <span className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          {refr.gi !== AI && (
+            <>
+              <select value={refr.gi} onChange={e => onBiz(refr, Number(e.target.value))}
+                className="text-[10px] bg-transparent border border-border-color rounded px-1 py-0.5 text-text-secondary"
+                title="사업 바꾸기">
+                <option value={COMMON}>(사업 없음)</option>
+                {bizList.map(b => <option key={b.gi} value={b.gi}>{b.alias}</option>)}
+              </select>
+              <button onClick={() => onStatus(refr, it.status === 'done' ? 'next' : 'done')}
+                className="text-[10px] px-1.5 py-0.5 border border-border-color rounded text-text-secondary hover:border-accent hover:text-accent"
+                title="완료 ↔ 진행·차주 옮기기">
+                {it.status === 'done' ? '→ 진행' : '→ 완료'}
+              </button>
+            </>
+          )}
+          <button onClick={() => onRemove(refr)} className="p-0.5 text-text-secondary hover:text-red-500" title="삭제">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </span>
+      )}
+
       <span className="text-[10.5px] whitespace-nowrap flex-shrink-0">
         {(it.sources || []).map((s, i) => (
           s.url
@@ -53,29 +128,126 @@ function Row({ it, alias }: { it: Item; alias?: string }) {
   );
 }
 
+/** 새 항목 한 줄 입력 */
+function AddRow({ label, onAdd }: { label: string; onAdd: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const commit = () => {
+    const t = text.trim();
+    if (t) onAdd(t);
+    setText(''); setOpen(false);
+  };
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className="mx-5 mt-1 px-2 py-1 text-[11px] text-text-secondary hover:text-accent flex items-center gap-1">
+        <Plus className="w-3 h-3" /> {label}
+      </button>
+    );
+  }
+  return (
+    <div className="px-5 py-1">
+      <input autoFocus value={text} placeholder={`${label} — 입력 후 Enter`}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { setText(''); setOpen(false); }
+        }}
+        className="w-full px-2 py-1 bg-white border border-accent/50 rounded text-sm
+                   focus:outline-none focus:ring-1 focus:ring-accent" />
+    </div>
+  );
+}
+
 /* 사업 그룹을 상태별로 평탄화 — 메일 구조(■ 섹션)에 맞춘다 */
 function flat(d: WorkDraft, pred: (s?: string) => boolean) {
-  const rows: Array<{ it: Item; alias?: string }> = [];
-  for (const b of d.businesses) for (const it of b.items) if (pred(it.status)) rows.push({ it, alias: b.alias });
-  for (const it of d.common) if (pred(it.status)) rows.push({ it });
+  const rows: Array<{ it: Item; alias?: string; refr: Ref }> = [];
+  d.businesses.forEach((b, gi) => b.items.forEach((it, ii) => {
+    if (pred(it.status)) rows.push({ it, alias: b.alias, refr: { gi, ii } });
+  }));
+  d.common.forEach((it, ii) => { if (pred(it.status)) rows.push({ it, refr: { gi: COMMON, ii } }); });
   return rows;
 }
 
 export const WorkDraftCard = memo(function WorkDraftCard({
   raw, onSelect,
 }: { raw: string; onSelect?: (t: string) => void }) {
-  let d: WorkDraft | null = null;
-  try { d = JSON.parse(raw); } catch { /* streaming partial */ }
+  const parsed = (() => { try { return JSON.parse(raw) as WorkDraft; } catch { return null; } })();
+
+  /* 편집 상태는 카드가 들고 있는다 — 저장은 초안 파일로 나간다.
+     raw 는 대화에 박제된 값이라 저장 후에도 옛 내용 그대로다. 되돌아가면 안 된다. */
+  const [d, setD] = useState<WorkDraft | null>(parsed);
+  const [saveState, setSave] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadedFor = useRef<string | null>(null);
+
+  const week = parsed?.week || '';
+  /* 카드가 다시 마운트되면(스크롤·세션 전환) 저장해 둔 최신본을 불러온다 */
+  useEffect(() => {
+    if (!week || loadedFor.current === week) return;
+    loadedFor.current = week;
+    fetch(`/api/work-report/draft?week=${encodeURIComponent(week)}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(j => { if (j?.ok && j.draft) setD(j.draft); })
+      .catch(() => { /* 없으면 대화에 박힌 값 그대로 */ });
+  }, [week]);
+
+  const save = useCallback((next: WorkDraft) => {
+    if (!week) return;
+    if (timer.current) clearTimeout(timer.current);
+    setSave('saving');
+    timer.current = setTimeout(() => {
+      fetch(`/api/work-report/draft?week=${encodeURIComponent(week)}`, {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businesses: next.businesses, common: next.common, ai: next.ai || [] }),
+      })
+        .then(r => r.json())
+        .then(j => setSave(j?.ok ? 'saved' : 'error'))
+        .catch(() => setSave('error'));
+    }, 600);
+  }, [week]);
+
+  const mutate = useCallback((fn: (cur: WorkDraft) => WorkDraft) => {
+    setD(cur => {
+      if (!cur) return cur;
+      const next = fn(structuredClone(cur));
+      save(next);
+      return next;
+    });
+  }, [save]);
+
+  const listOf = (cur: WorkDraft, gi: number): Item[] =>
+    gi === AI ? (cur.ai ||= []) : gi === COMMON ? cur.common : cur.businesses[gi].items;
+
+  const onEdit = (r: Ref, text: string) => mutate(cur => { listOf(cur, r.gi)[r.ii].text = text; return cur; });
+  const onRemove = (r: Ref) => mutate(cur => { listOf(cur, r.gi).splice(r.ii, 1); return cur; });
+  const onStatus = (r: Ref, status: string) => mutate(cur => { listOf(cur, r.gi)[r.ii].status = status; return cur; });
+  const onBiz = (r: Ref, gi: number) => mutate(cur => {
+    if (gi === r.gi) return cur;
+    const [moved] = listOf(cur, r.gi).splice(r.ii, 1);
+    listOf(cur, gi).push(moved);
+    return cur;
+  });
+  /* 직접 입력한 항목은 출처가 없는 게 정상이다 — carry 로 표시해 ⚠ 경고를 띄우지 않는다 */
+  const onAdd = (gi: number, status: string) => (text: string) =>
+    mutate(cur => { listOf(cur, gi).push({ text, status, sources: [], carry: true }); return cur; });
+
   if (!d || !Array.isArray(d.businesses)) {
     return <div className="my-2 p-3 rounded-lg border border-border-color bg-background text-xs text-text-secondary italic">
       업무보고 초안 로딩 중...</div>;
   }
+
+  const editable = !!week;
   const done = flat(d, s => s === 'done' || s === undefined);
   const next = flat(d, s => s === 'wip' || s === 'next');
   const ai = Array.isArray(d.ai) ? d.ai : [];
-  const warnCount = (d.warnings || []).length;
+  const warnCount = done.concat(next).filter(r => !r.it.carry && !(r.it.sources || []).length).length;
   const fails = d.failures || [];
   const emptyBiz = d.businesses.filter(b => b.items.length === 0);
+  const bizList = d.businesses.map((b, gi) => ({ alias: b.alias, gi }));
+  const rowProps = { editable, bizList, onEdit, onRemove, onStatus, onBiz };
 
   return (
     <div className="my-3 rounded-2xl border border-accent/25 bg-white max-w-4xl overflow-hidden">
@@ -109,20 +281,21 @@ export const WorkDraftCard = memo(function WorkDraftCard({
       <div className="py-2">
         <div className="px-4 text-[11px] font-extrabold text-accent">■ 완료</div>
         {done.length > 0
-          ? done.map((r, i) => <Row key={i} it={r.it} alias={r.alias} />)
+          ? done.map(r => <Row key={`${r.refr.gi}:${r.refr.ii}`} it={r.it} alias={r.alias} refr={r.refr} {...rowProps} />)
           : <div className="px-4 py-1 text-[11px] text-text-secondary/60 italic">(항목 없음)</div>}
+        {editable && <AddRow label="완료 항목 추가" onAdd={onAdd(COMMON, 'done')} />}
 
         <div className="px-4 pt-2 text-[11px] font-extrabold text-accent">■ 진행 · 차주 계획</div>
         {next.length > 0
-          ? next.map((r, i) => <Row key={i} it={r.it} alias={r.alias} />)
+          ? next.map(r => <Row key={`${r.refr.gi}:${r.refr.ii}`} it={r.it} alias={r.alias} refr={r.refr} {...rowProps} />)
           : <div className="px-4 py-1 text-[11px] text-text-secondary/60 italic">(항목 없음)</div>}
+        {editable && <AddRow label="진행·차주 항목 추가" onAdd={onAdd(COMMON, 'next')} />}
 
-        {ai.length > 0 && (
-          <>
-            <div className="px-4 pt-2 text-[11px] font-extrabold text-accent">■ 업무 - AI 툴 활용</div>
-            {ai.map((it, i) => <Row key={i} it={{ ...it, carry: true }} />)}
-          </>
-        )}
+        <div className="px-4 pt-2 text-[11px] font-extrabold text-accent">■ 업무 - AI 툴 활용</div>
+        {ai.length > 0
+          ? ai.map((it, ii) => <Row key={`ai:${ii}`} it={{ ...it, carry: true }} refr={{ gi: AI, ii }} {...rowProps} />)
+          : <div className="px-4 py-1 text-[11px] text-text-secondary/60 italic">(항목 없음)</div>}
+        {editable && <AddRow label="AI 활용 항목 추가" onAdd={onAdd(AI, 'done')} />}
       </div>
 
       {emptyBiz.length > 0 && (
@@ -142,7 +315,14 @@ export const WorkDraftCard = memo(function WorkDraftCard({
           className="px-3 py-1.5 text-xs border border-border-color rounded-lg text-text-secondary flex items-center gap-1 flex-shrink-0">
           <RotateCcw className="w-3 h-3" /> 초기화
         </button>
-        <span className="text-[11px] text-text-secondary flex-1">✏️ 수정은 채팅으로 · 화면에 보이는 그대로 메일이 됩니다</span>
+        <span className="text-[11px] text-text-secondary flex-1 flex items-center gap-1">
+          {saveState === 'saving' && <span className="text-accent">저장 중...</span>}
+          {saveState === 'saved' && <span className="text-accent flex items-center gap-0.5"><Check className="w-3 h-3" /> 저장됨</span>}
+          {saveState === 'error' && <span className="text-red-500">저장 실패 — 다시 시도해주세요</span>}
+          {saveState === 'idle' && (editable
+            ? '✏️ 항목을 클릭해 수정 · 화면에 보이는 그대로 메일이 됩니다'
+            : '✏️ 수정은 채팅으로 · 화면에 보이는 그대로 메일이 됩니다')}
+        </span>
         <button onClick={() => onSelect?.('업무보고 초안 확정. 메일 발송 준비해줘')}
           className="px-4 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white font-semibold rounded-lg flex items-center gap-1 flex-shrink-0">
           <CheckCircle2 className="w-3.5 h-3.5" /> 확정
