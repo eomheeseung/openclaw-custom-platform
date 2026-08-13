@@ -1,0 +1,9 @@
+[Unit]
+Description=TideClaw 아침 브리핑 — 평일 08:00~11:30, 30분 간격
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08,09,10,11:00,30
+Persistent=false
+
+[Install]
+WantedBy=timers.target

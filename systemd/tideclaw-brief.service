@@ -1,0 +1,6 @@
+[Unit]
+Description=TideClaw 아침 브리핑 (두레이 발송)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/openclaw/work-report-deploy/scripts/brief-all.sh
