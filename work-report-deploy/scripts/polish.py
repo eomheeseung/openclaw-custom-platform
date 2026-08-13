@@ -96,8 +96,8 @@ def apply(draft, edits):
             # 대여섯 번 반복된다(실측: 한 회차 170초).
             new = str(val["text"]).strip()[:300]
             origin = it.get("raw_text") or it.get("text") or ""
+            # 사전 기반 교정은 쓰지 않는다 — 멀쩡한 단어를 망가뜨렸다(보건소→보고소)
             fixed = _fix_replacement(new, origin)
-            fixed = verify_draft.fix_typos(fixed)
             fixed = _restore_from(fixed, origin)
             it["text"] = fixed
             if fixed != new:

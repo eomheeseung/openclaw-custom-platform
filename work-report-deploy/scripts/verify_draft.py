@@ -40,7 +40,21 @@ def _cho_seq(s):
     return tuple(_cho(c) for c in s)
 
 
-def fix_typos(text, terms=TERMS):
+def fix_typos(text, terms=None):
+    """⚠ 사전(TERMS) 기반 교정은 폐기했다.
+
+    초성이 같고 한 글자만 다르면 되돌리는 규칙이 **멀쩡한 단어를 망가뜨렸다**(실측):
+        보건소 → 보고소 ('보고')      개인정보 → 개일정보 ('일정')
+        금연정보포털 → 금일정배포털     접속정보 → 접수정보
+    한국어에는 초성이 같고 한 글자만 다른 정상 단어 쌍이 너무 많다. 규칙으로 구분할 수 없다.
+    되돌리기는 **원문에 실제로 있던 단어**를 기준으로만 한다(polish._restore_from).
+    """
+    if terms is None:
+        return text
+    return _fix_typos_with(text, terms)
+
+
+def _fix_typos_with(text, terms):
     """초성이 전부 같은데 한 글자만 다른 구간을 사전 단어로 되돌린다.
 
     ⚠ 그 구간 자체가 이미 올바른 단어면 건드리지 않는다.
@@ -73,6 +87,16 @@ def business_terms(businesses):
 
 
 def verify(nn, week):
+    """⚠ 더 이상 글자를 고치지 않는다.
+
+    사전 기반 교정이 멀쩡한 단어를 망가뜨렸다(보건소→보고소, 개인정보→개일정보,
+    금연정보포털→금일정배포털). 되돌리기는 원문 대조로만 한다(polish 저장 시점).
+    호출부(finish.py)를 건드리지 않으려고 함수는 남겨 두되 아무것도 바꾸지 않는다.
+    """
+    return []
+
+
+def _verify_legacy(nn, week):
     path = f"{paths.data_dir(nn)}/work-report/drafts/draft-{week}.json"
     d = json.load(open(path))
     terms = TERMS + business_terms(paths.load_master().get("businesses", []))
@@ -80,13 +104,13 @@ def verify(nn, week):
     for grp in list(d.get("businesses") or []) + [{"items": d.get("common") or []}]:
         for it in grp.get("items") or []:
             before = it.get("text", "")
-            after = fix_typos(before, terms)
+            after = _fix_typos_with(before, terms)
             if after != before:
                 it["text"] = after
                 fixed.append({"before": before, "after": after})
     for it in d.get("ai") or []:
         before = it.get("text", "")
-        after = fix_typos(before, terms)
+        after = _fix_typos_with(before, terms)
         if after != before:
             it["text"] = after
             fixed.append({"before": before, "after": after})
