@@ -20,6 +20,17 @@ def in_container():
     return os.path.isdir("/home/node/.openclaw")
 
 
+def self_nn():
+    """이 컨테이너의 사용자 번호. `OPENCLAW_GATEWAY_TOKEN=tc-user02` 에서 뽑는다.
+
+    스크립트가 스스로 알아내지 못하면 에이전트가 환경변수·cron 설정·소스를 뒤지며
+    한참을 헤맨다(실측: 웹에서 직접 대화할 때 번호를 몰라 탐색만 수 분).
+    """
+    import re
+    m = re.search(r"user(\d{1,2})", os.environ.get("OPENCLAW_GATEWAY_TOKEN", ""))
+    return m.group(1).zfill(2) if m else None
+
+
 def data_dir(nn):
     """userNN 데이터 루트. 컨테이너에서는 bind mount 라 nn 무관."""
     return "/home/node/.openclaw" if in_container() else f"/opt/openclaw/data/user{nn}"

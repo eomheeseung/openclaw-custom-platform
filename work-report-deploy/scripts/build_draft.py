@@ -10,7 +10,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import paths
 import run_log
@@ -150,11 +150,23 @@ def build(nn, date_from, date_to):
     return out, draft
 
 
+def this_week():
+    """이번 주 월~금. 기간을 생략해도 바로 돌 수 있게 한다."""
+    today = datetime.now()
+    mon = today - timedelta(days=today.weekday())
+    return mon.strftime("%Y-%m-%d"), (mon + timedelta(days=4)).strftime("%Y-%m-%d")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("사용법: build_draft.py <userNN> <from:YYYY-MM-DD> <to:YYYY-MM-DD>")
+    # 인자를 생략하면 이 컨테이너의 사용자 번호와 이번 주를 쓴다 —
+    # 에이전트가 번호를 찾느라 헤매지 않도록(실측: 탐색만 수 분).
+    args = sys.argv[1:]
+    nn = args[0] if args and args[0].isdigit() else paths.self_nn()
+    if not nn:
+        print(json.dumps({"ok": False, "error": "사용자 번호를 알 수 없습니다"}, ensure_ascii=False))
         sys.exit(2)
-    nn, f, t = sys.argv[1], sys.argv[2], sys.argv[3]
+    rest = [a for a in args if not a.isdigit()]
+    f, t = (rest[0], rest[1]) if len(rest) >= 2 else this_week()
     try:
         path, d = build(nn, f, t)
         total = sum(len(g["items"]) for g in d["businesses"]) + len(d["common"])

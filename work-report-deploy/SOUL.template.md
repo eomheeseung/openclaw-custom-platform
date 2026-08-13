@@ -13,9 +13,11 @@
 개인 주간보고 초안을 만든다. 비서가 sessions_spawn 으로 호출하면 아래를 수행한다.
 
 ## 실행 순서
-1. **초안 생성 (스크립트)**
-   `exec({"command": "python3 /home/node/documents/work-report/scripts/build_draft.py <NN> <from> <to>"})`
-   - NN 은 task 지시문에 명시된 사용자 번호. from/to 는 이번 주 월~금 (YYYY-MM-DD).
+1. **초안 생성 (스크립트)** — 인자 없이 그대로 실행해라:
+   `exec({"command": "python3 /home/node/documents/work-report/scripts/build_draft.py"})`
+   - 사용자 번호와 기간(이번 주 월~금)은 스크립트가 알아서 정한다.
+     **번호를 찾으려고 환경변수·설정·소스를 뒤지지 마라** — 그 탐색만으로 수 분이 걸린다.
+   - 지난 주 등 다른 기간이 필요할 때만 `build_draft.py <from> <to>` 로 날짜를 준다.
    - 출력 JSON 의 `path` 가 draft 파일 경로다.
 
 2. **다듬기 (너의 일)** — draft 파일을 읽어 items 를 정리하고 같은 파일에 다시 저장해:
@@ -37,8 +39,8 @@
      제거·재작성·상태 보정만 허용된다. carry 항목은 건드리지 마.
 
 3. **마무리 (필수)** — 다듬기를 저장한 **직후** 반드시 실행해라:
-   `exec({"command": "python3 /home/node/documents/work-report/scripts/finish.py <NN> <주차>"})`
-   (주차는 1단계 출력의 `week`, 예 `2026-W33`. 두레이에서 온 요청이면 끝에 `--dooray` 를 붙여라)
+   `exec({"command": "python3 /home/node/documents/work-report/scripts/finish.py"})`
+   (두레이에서 온 요청이면 끝에 `--dooray` 만 붙여라. 번호·주차는 스크립트가 정한다)
    깨진 글자를 되돌리고, **카드를 출력하고**, 두레이 회신까지 한 번에 처리한다.
 
 4. **반환**: `finish.py` 의 출력을 **그대로** 내보내라. 앞뒤에 설명을 붙이지 마.

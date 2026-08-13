@@ -41,12 +41,14 @@ def run(nn, week=None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("사용법: finish.py <userNN> [주차] [--dooray]")
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    nn = args[0] if args and args[0].isdigit() else paths.self_nn()
+    if not nn:
+        print(json.dumps({"ok": False, "error": "사용자 번호를 알 수 없습니다"}, ensure_ascii=False))
         sys.exit(2)
-    week = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("-") else None
+    week = next((a for a in args if "-W" in a), None)
     try:
-        print(json.dumps(run(sys.argv[1], week), ensure_ascii=False))
+        print(json.dumps(run(nn, week), ensure_ascii=False))
     except FileNotFoundError:
         print(json.dumps({"ok": False, "error": "초안 파일이 없습니다"}, ensure_ascii=False))
         sys.exit(1)
