@@ -100,7 +100,9 @@ const CARD_FENCE_MARKERS: readonly string[] = [
 export const FINISH_HINT = [
   '↳ 마무리는 이 명령 하나다. 사용법을 확인하려고 소스를 열지 마라:',
   '   exec: python3 /home/node/documents/work-report/scripts/finish.py',
-  '   (사용자 번호·주차는 스크립트가 알아서 정한다. 출력을 그대로 내보내고 네 말로 다시 쓰지 마라)',
+  '   (사용자 번호·주차는 스크립트가 알아서 정한다)',
+  '   실행 뒤에는 "초안 준비했습니다" 한 줄만 답해라. 출력(카드 JSON)을 답변에 옮겨 적지 마라 —',
+  '   화면이 그 출력을 직접 읽어 카드를 그린다. 옮겨 적으면 카드가 두 번 나오고 한글이 깨진다.',
 ].join('\n');
 
 /* 확정·발송 요청에는 마무리 지시를 붙이면 안 된다 — "마무리는 finish.py 하나다" 가
