@@ -178,17 +178,33 @@ def collect_gmail(date_from, date_to, member_name=None):
     return items, ok
 
 
-def collect_calendar(days=7, date_from=None, date_to=None):
-    ok, d = _run(f"gog calendar list {days}")
+CALENDAR_API = "http://172.18.0.1:18799/api/calendar/search"
+
+
+def collect_calendar(nn, date_from, date_to):
+    """기간 지정 조회 API 로 본인 일정을 가져온다.
+
+    ⚠ `gog calendar list [일수]` 를 쓰면 안 된다 — **미래만** 본다(음수 무효, search 도 미래 30일).
+    주간보고는 지나간 한 주를 정리하는 일이라 과거를 못 읽으면 수집이 무의미하다(실측:
+    보고 기간 8/10~8/14 중 월·화·수가 통째로 빠졌다). CLI 는 한글도 깨뜨렸다(기술구현??룹).
+    """
+    cmd = ["curl", "-s", "-m", "40", "-X", "POST", "-H", "Content-Type: application/json",
+           "-d", json.dumps({"userNN": nn, "timeMin": date_from, "timeMax": date_to},
+                            ensure_ascii=False), CALENDAR_API]
+    try:
+        d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout)
+    except Exception:
+        return [], False
+    if not d.get("ok"):
+        return [], False
     items = []
     for e in d.get("events", []):
-        it = normalize_item(e, "calendar", None, e.get("htmlLink"), "done")
-        if date_from and not in_period(it["at"], date_from, date_to):
-            continue
-        if RE_CAL_NOISE.match((it.get("text") or "").strip()):
+        title = (e.get("title") or "").strip()
+        if not title or RE_CAL_NOISE.match(title):
             continue          # "사무실" 처럼 장소만 적어둔 일정은 업무가 아니다
-        items.append(it)
-    return items, ok
+        items.append(normalize_item(
+            {"title": title, "date": e.get("start")}, "calendar", None, e.get("htmlLink"), "done"))
+    return items, True
 
 
 DRIVE_API = "http://172.18.0.1:18799/api/drive/advanced-search"
@@ -315,7 +331,7 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
     if tool_enabled(tools, "gmail"):
         take("gmail", *collect_gmail(date_from, date_to, figma_name))
     if tool_enabled(tools, "calendar"):
-        take("calendar", *collect_calendar(7, date_from, date_to))
+        take("calendar", *collect_calendar(nn, date_from, date_to))
     if tool_enabled(tools, "drive"):
         take("drive", *collect_drive(nn, date_from, date_to, member_email))
     if tool_enabled(tools, "github"):

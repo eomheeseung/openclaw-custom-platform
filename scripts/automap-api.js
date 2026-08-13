@@ -916,6 +916,43 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* POST /api/calendar/search — 기간 지정 일정 조회.
+     gog CLI 는 `calendar list [일수]` 로 **미래만** 본다(음수 무효, search 도 미래 30일).
+     주간보고는 지나간 한 주를 정리하는 일이라 과거를 못 읽으면 수집이 무의미하다(실측).
+     Body: { userNN, timeMin, timeMax } (YYYY-MM-DD) */
+  if (req.method === 'POST' && url.pathname === '/api/calendar/search') {
+    try {
+      const body = await parseBody(req);
+      const nn = resolveUserNN(req, body.userNN);
+      if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+      const accessToken = await getValidAccessToken(nn);
+      if (!accessToken) { jsonRes(res, 401, { ok: false, error: 'google not linked' }); return; }
+      const tMin = new Date(`${body.timeMin || '1970-01-01'}T00:00:00+09:00`).toISOString();
+      const tMax = new Date(`${body.timeMax || '2999-12-31'}T23:59:59+09:00`).toISOString();
+      const qs = new URLSearchParams({
+        timeMin: tMin, timeMax: tMax, singleEvents: 'true', orderBy: 'startTime', maxResults: '250',
+      });
+      const apiUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${qs}`;
+      const out = await gmailApiRequest('GET', apiUrl, accessToken);   // 같은 OAuth 토큰을 쓴다
+      if (out.status >= 400) { jsonRes(res, out.status, { ok: false, error: out.data?.error?.message || 'calendar api error' }); return; }
+      const events = (out.data?.items || []).map(e => ({
+        id: e.id,
+        title: e.summary || '',
+        start: e.start?.dateTime || e.start?.date || '',
+        end: e.end?.dateTime || e.end?.date || '',
+        allDay: !e.start?.dateTime,
+        status: e.status,
+        organizer: e.organizer?.email || '',
+        htmlLink: e.htmlLink || '',
+        creator: e.creator?.email || '',
+      }));
+      jsonRes(res, 200, { ok: true, count: events.length, events });
+    } catch (e) {
+      jsonRes(res, 500, { ok: false, error: e.message });
+    }
+    return;
+  }
+
   /* GET /api/agent-aliases — 에이전트 이름으로 안 잡히는 말투 보완용 별칭.
      openclaw.json 의 agents.list[].aliases 는 스키마가 거부하므로(재시작 루프) 별도 파일로 둔다.
      두레이 데몬은 파일을 직접 읽지만 화면은 브라우저에서 도니 API 가 필요하다. */
