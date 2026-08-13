@@ -916,6 +916,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* GET /api/agent-aliases — 에이전트 이름으로 안 잡히는 말투 보완용 별칭.
+     openclaw.json 의 agents.list[].aliases 는 스키마가 거부하므로(재시작 루프) 별도 파일로 둔다.
+     두레이 데몬은 파일을 직접 읽지만 화면은 브라우저에서 도니 API 가 필요하다. */
+  if (req.method === 'GET' && url.pathname === '/api/agent-aliases') {
+    const nn = resolveUserNN(req, url.searchParams.get('userNN'));
+    if (!nn) { jsonRes(res, 403, { ok: false, error: 'Forbidden' }); return; }
+    try {
+      const raw = JSON.parse(fs.readFileSync(`/opt/openclaw/data/user${nn}/agent-aliases.json`, 'utf8'));
+      const aliases = {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (!k.startsWith('_') && Array.isArray(v)) aliases[k] = v;   // _comment 등 메타 키 제외
+      }
+      jsonRes(res, 200, { ok: true, aliases });
+    } catch (e) { jsonRes(res, 200, { ok: true, aliases: {} }); }     // 파일이 없으면 별칭 없음 = 정상
+    return;
+  }
+
   /* GET /api/work-report/draft?week=2026-W33 — 초안 원본.
      화면이 exec 결과(build_draft.py 출력)를 보고 이걸 불러와 카드를 그린다.
      모델에게 카드 블록을 출력하게 시켰더니 매번 자기 말로 요약해 카드가 아예 안 나왔다(실측 5회+).

@@ -219,6 +219,16 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           aliases: (a.aliases as string[]) || [],
         };
       });
+      /* 별칭은 서버 파일에 있다 — openclaw.json 에 넣으면 스키마가 거부한다(실측: 재시작 루프).
+         두레이 데몬과 같은 파일을 보므로 채널마다 다르게 동작하지 않는다. */
+      try {
+        const nn = (tokenRef.current.match(/user(\d+)/)?.[1] || '').padStart(2, '0');
+        const r = await fetch(`/api/agent-aliases?userNN=${nn}`, { credentials: 'include' });
+        const j = await r.json() as { ok?: boolean; aliases?: Record<string, string[]> };
+        if (j?.ok && j.aliases) {
+          for (const a of agentList) a.aliases = j.aliases[a.id] || [];
+        }
+      } catch { /* 별칭이 없어도 이름 매칭은 동작한다 */ }
       setAgents(agentList);
       agentsRef.current = agentList;
     } catch (err) {
