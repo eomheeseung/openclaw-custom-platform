@@ -1075,6 +1075,9 @@ const server = http.createServer(async (req, res) => {
       cur.edited_at = new Date().toISOString();
       const tmp = `${p}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(cur, null, 2));
+      // ⚠ 이 API 는 root 로 돈다. 그대로 두면 파일이 root 소유가 되어 컨테이너(node,
+      //   uid 1000)가 다음 수집 때 덮어쓰지 못한다(실측: "draft 파일이 root 소유라 쓰기가 안 됩니다").
+      try { fs.chownSync(tmp, 1000, 1000); } catch (err) { console.warn('[wr] chown failed:', err.message); }
       fs.renameSync(tmp, p);   // 원자적 교체 — 발송이 반쯤 쓰인 파일을 읽지 않게
       jsonRes(res, 200, { ok: true, draft: cur });
     }).catch(e => jsonRes(res, e.code === 'ENOENT' ? 404 : 500, { ok: false, error: e.message }));
