@@ -234,7 +234,7 @@ def compose(nn, now):
         lines.append("· 없음")
 
     tasks = due_tasks(nn, today)
-    lines += ["", "■ 마감 임박"]
+    lines += ["", "■ 두레이 업무 마감"]
     if tasks:
         lines += [f"· {due[5:]} {name} — {subj}" for due, name, subj in tasks[:TASK_MAX]]
         if len(tasks) > TASK_MAX:
