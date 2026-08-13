@@ -56,6 +56,10 @@ function useCopy() {
 interface MessageListProps {
   messages: Message[];
   agents?: Agent[];
+  /* 지금 답하는 에이전트 — 대기 표시에 이름을 쓴다. 이관 뒤에도 "비서가 생각 중" 이
+     떠서 누가 일하는지 알 수 없었다(실측). */
+  responderName?: string;
+  responderEmoji?: string;
   onSendMessage?: (text: string) => void;
   onPrefill?: (text: string) => void;
   /* 프론트 처리 인텐트 (biz-picker intent 매칭). 값 있으면 onSendMessage 스킵. */
@@ -252,7 +256,7 @@ function findGroupingConfirmBefore(msgs: Message[], idx: number): ConfirmedGroup
   return null;
 }
 
-export function MessageList({ messages, agents = [], onSendMessage, onPrefill, onIntentPick }: MessageListProps) {
+export function MessageList({ messages, agents = [], responderName, responderEmoji, onSendMessage, onPrefill, onIntentPick }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -622,7 +626,8 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
             }),
             /* 사용자 마지막 발화 이후 응답 미도착 → "비서 생각 중" 인라인 카드 */
             showAssistantThinking && (
-              <ThinkingCard key="thinking-card" startTime={lastMsg!.timestamp} />
+              <ThinkingCard key="thinking-card" startTime={lastMsg!.timestamp}
+                name={responderName} emoji={responderEmoji} />
             ),
           ];
         })()
@@ -631,7 +636,15 @@ export function MessageList({ messages, agents = [], onSendMessage, onPrefill, o
   );
 }
 
-function ThinkingCard({ startTime }: { startTime: Date }) {
+/** 한글 주격 조사 — 받침이 있으면 '이', 없으면 '가'. "업무보고가" 는 어색하다 */
+function subjectParticle(word: string): string {
+  const ch = (word || '').trim().slice(-1).charCodeAt(0);
+  if (Number.isNaN(ch) || ch < 0xac00 || ch > 0xd7a3) return '가';
+  return (ch - 0xac00) % 28 === 0 ? '가' : '이';
+}
+
+function ThinkingCard({ startTime, name, emoji }: { startTime: Date; name?: string; emoji?: string }) {
+  const who = (name || '').trim();
   return (
     <div className="flex gap-3">
       <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center bg-card border border-border-color shadow-sm">
@@ -645,7 +658,9 @@ function ThinkingCard({ startTime }: { startTime: Date }) {
               <span className="w-1.5 h-1.5 rounded-full bg-accent/50 animate-bounce" style={{ animationDelay: '150ms' }} />
               <span className="w-1.5 h-1.5 rounded-full bg-accent/50 animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
-            <span className="text-xs font-medium">비서가 생각 중입니다</span>
+            <span className="text-xs font-medium">
+              {emoji ? `${emoji} ` : ''}{who ? `${who}${subjectParticle(who)} 작성하고 있습니다` : '작성하고 있습니다'}
+            </span>
             <span className="text-[10px] font-mono text-text-secondary/60">
               <ElapsedTimer startTime={startTime} />
             </span>
