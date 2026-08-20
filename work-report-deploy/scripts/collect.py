@@ -538,8 +538,18 @@ def _fig_versions(token, key, date_from):
 
 
 def _fig_tree(token, key, version_id):
-    """그 시점의 페이지 → 최상위 프레임 이름. depth=2 면 1MB 안쪽이다(실측)."""
-    d = _fig_get(token, f"{FIGMA_API}/v1/files/{key}?depth=2&version={version_id}", timeout=60)
+    """그 시점의 페이지 → 최상위 프레임 이름. depth=2 면 1MB 안쪽이다(실측).
+
+    ⚠ 1MB 조회를 연달아 하면 피그마가 요율 제한(429)으로 끊는다(실측: 12연속 중 실패).
+    호출 사이 2초 간격 + 실패 시 15초 쉬고 두 번 재시도."""
+    import time as _time
+    d = None
+    for attempt in range(3):
+        d = _fig_get(token, f"{FIGMA_API}/v1/files/{key}?depth=2&version={version_id}", timeout=60)
+        if d:
+            break
+        _time.sleep(15)
+    _time.sleep(2)
     if not d:
         return None
     out = {}
@@ -552,28 +562,36 @@ def _fig_tree(token, key, version_id):
 
 
 def _fig_diff(old, new):
-    """페이지별 추가·삭제·이름변경. 프레임 **내부** 수정은 이름이 그대로라 잡히지 않는다 —
-    피그마에 버전 간 비교 API 가 없어 여기까지가 한계다."""
+    """페이지별 추가·이름변경 (id, 이름) 목록. 프레임 **내부** 수정은 이름이 그대로라
+    잡히지 않는다 — 피그마에 버전 간 비교 API 가 없어 여기까지가 한계다."""
     pages = []
     for pid, pg in (new or {}).items():
         before = (old or {}).get(pid, {}).get("kids", {})
         after = pg.get("kids", {})
         named = lambda v: v and not RE_FIG_AUTONAME.match(v)
         # 같은 이름의 프레임이 여러 개인 경우가 흔하다 — 이름 기준으로 한 번만 센다
-        added = sorted({v for k, v in after.items() if k not in before and named(v)})
-        renamed = sorted({after[k] for k in after
-                          if k in before and before[k] != after[k] and named(after[k])})
-        if added or renamed:
-            pages.append({"page": pg.get("name") or "", "added": added, "renamed": renamed})
-    return sorted(pages, key=lambda x: -(len(x["added"]) + len(x["renamed"])))
+        seen, pairs = set(), []
+        for k, v in after.items():
+            if k not in before and named(v) and v not in seen:
+                seen.add(v); pairs.append((k, v))
+        for k in after:
+            if k in before and before[k] != after[k] and named(after[k]) and after[k] not in seen:
+                seen.add(after[k]); pairs.append((k, after[k]))
+        if pairs:
+            pages.append({"page": pg.get("name") or "", "pairs": pairs})
+    return sorted(pages, key=lambda x: -len(x["pairs"]))
 
 
 def collect_figma(nn, date_from, date_to):
-    """등록된 파일의 버전 이력에서 **본인 편집만** 골라 파일당 한 줄로 낸다.
+    """등록된 파일에서 **본인이 저장한 구간의 변경만** 골라낸다.
 
-    ⚠ 자동 발견이 불가능하다 — 피그마에는 **사용자 기준 파일 목록 API 가 없고**(명세 확인),
-    팀·폴더 조회는 관리자 권한이 필요해 일반 멤버 토큰으로는 403 이다. 그래서 개별 등록만 가능하다.
-    버전에 label 이 거의 없어(자동 저장) '무엇을 했는지'는 알 수 없고 '편집했다'만 남는다.
+    ⚠ 자동 발견이 불가능하다 — 피그마에는 사용자 기준 파일 목록 API 가 없고,
+    팀·폴더 조회는 관리자 권한이 필요해 일반 멤버 토큰으로는 403 이다. 개별 등록만 가능.
+
+    ⚠ 주 전체를 통짜로 diff 하면 **남의 작업이 내 건수로 잡힌다** — 같은 파일을 등록한
+    두 사람 카드에 같은 60건이 떴다(실측: mildo). 프레임 단위 작성자는 API 에 없지만
+    버전 저장자는 남으므로, 본인이 저장한 **연속 구간의 앞뒤**만 비교해 그 구간의
+    변경을 본인 몫으로 본다. 완전하진 않아도 통짜 diff 보다 훨씬 가깝다.
     """
     try:
         integ = json.load(open(f"{paths.data_dir(nn)}/integrations.json"))
@@ -590,56 +608,96 @@ def collect_figma(nn, date_from, date_to):
     for f in files:
         key = f.get("key") if isinstance(f, dict) else f
         name = (f.get("name") if isinstance(f, dict) else None) or key
-        cmd = ["curl", "-s", "-m", "30", "-H", f"X-Figma-Token: {token}",
-               f"{FIGMA_API}/v1/files/{key}/versions"]
-        try:
-            d = json.loads(_out(subprocess.run(cmd, capture_output=True, timeout=45)))
-        except Exception:
+
+        allv = _fig_versions(token, key, date_from)          # 최신 → 과거
+        if not allv:
             ok_all = False
             continue
-        if d.get("status"):
-            ok_all = False
-            continue
-        mine = [v for v in d.get("versions", [])
-                if str((v.get("user") or {}).get("id")) == user_id
-                and in_period(v.get("created_at"), date_from, date_to)]
+        seq = [v for v in reversed(allv)
+               if in_period(v.get("created_at"), date_from, date_to)]   # 과거 → 최신
+        base = next((v for v in allv if (v.get("created_at") or "")[:10] < date_from), None)
+        mine = [v for v in seq if str((v.get("user") or {}).get("id")) == user_id]
         if not mine:
             continue
-        latest = max(mine, key=lambda v: v.get("created_at") or "")
-        label = (latest.get("label") or "").strip()
+        latest = mine[-1]
 
-        # 버전 이름이 거의 비어 있어(자동 저장) '무엇을 했는지'는 이력에 없다.
-        # 기간 시작 시점과 지금의 파일 구조를 비교해 프레임 단위로 알아낸다.
-        detail = ""
-        allv = _fig_versions(token, key, date_from)
-        base = next((v for v in allv if (v.get("created_at") or "")[:10] < date_from), None)
-        if base:
-            old = _fig_tree(token, key, base.get("id"))
-            new = _fig_tree(token, key, latest.get("id"))
-            if old is None or new is None:
-                ok_all = False
+        # 본인 저장이 연속된 구간들: (직전 경계 버전, 구간 마지막 버전)
+        runs, i = [], 0
+        while i < len(seq):
+            if str((seq[i].get("user") or {}).get("id")) == user_id:
+                j = i
+                while j + 1 < len(seq) and str((seq[j + 1].get("user") or {}).get("id")) == user_id:
+                    j += 1
+                prev = seq[i - 1] if i > 0 else base
+                runs.append((prev, seq[j]))
+                i = j + 1
             else:
-                pages = _fig_diff(old, new)
+                i += 1
 
-        url = f"https://www.figma.com/design/{key}"
+        # 경계 트리 조회 수 상한 — 저장을 잘게 나눠 하는 사람은 구간이 많아진다(실측: 주 6구간).
+        # 그 이상은 통짜 diff 로 물러서고 '공동 작업 포함' 을 밝힌다.
+        bounds = []
+        for prev, last in runs:
+            for v in (prev, last):
+                vid = v.get("id") if v else None
+                if vid and vid not in bounds:
+                    bounds.append(vid)
+        shared_note = ""
+        if len(bounds) > 14:
+            runs = [(base, seq[-1])]
+            shared_note = " · 공동 작업 포함"
+            bounds = [v.get("id") for v in (base, seq[-1]) if v]
+
+        # ⚠ 병렬로 받으면 피그마가 요율 제한으로 끊는다(실측: 6건 중 2건 실패·55초).
+        #   순차 3.3초/건이 가장 빠르다. 14경계 ≈ 45초 — 주 1회 보고라 감수한다.
+        trees, fail = {}, False
+        for vid in bounds:
+            t = _fig_tree(token, key, vid)
+            if t is None:
+                fail = True
+                break
+            trees[vid] = t
+        if fail:
+            ok_all = False
+            continue
+
+        # 구간별 diff 를 페이지 단위로 합친다 (이름 기준 중복 제거, 첫 노드 id 유지)
+        merged = {}                     # page → {name: node_id}
+        for prev, last in runs:
+            old = trees.get(prev.get("id")) if prev else {}
+            new = trees.get(last.get("id"))
+            if new is None:
+                continue
+            for pg in _fig_diff(old or {}, new):
+                slot = merged.setdefault(pg["page"], {})
+                for nid, nm in pg["pairs"]:
+                    slot.setdefault(nm, nid)
+
+        pages = sorted(({"page": p, "pairs": list(d.items())} for p, d in merged.items() if d),
+                       key=lambda x: -len(x["pairs"]))
+        base_url = f"https://www.figma.com/design/{key}"
         if pages:
             # 페이지 하나가 곧 한 덩어리의 작업이다 — 파일당 한 줄로 뭉치면
             # "시안 편집" 과 다를 바 없어진다.
             for pg in pages[:FIG_PAGE_MAX]:
-                names = pg["added"] + pg["renamed"]
+                names = [nm for nm, _ in pg["pairs"]]
                 head = ", ".join(names[:FIG_NAME_MAX])
                 more = f" 외 {len(names) - FIG_NAME_MAX}건" if len(names) > FIG_NAME_MAX else ""
+                # 증적 링크를 첫 변경 프레임으로 바로 건다 — 파일 열고 찾아다닐 필요가 없다
+                nid = pg["pairs"][0][1]
+                url = f"{base_url}?node-id={str(nid).replace(':', '-')}"
                 items.append(normalize_item(
-                    {"title": f"{name} · {pg['page']} ({len(names)}건) — {head}{more}",
+                    {"title": f"{name} · {pg['page']} ({len(names)}건{shared_note}) — {head}{more}",
                      "date": latest.get("created_at")},
                     "figma", None, url, "done", project=name,
                     # 전체 이름은 원문으로 보존 — 다듬기가 깨뜨린 글자 복원의 기준이 된다
                     raw_text=f"{name} · {pg['page']} — " + ", ".join(names)))
         else:
+            label = (latest.get("label") or "").strip()
             items.append(normalize_item(
                 {"title": f"{name} 시안 편집" + (f" ({label})" if label else ""),
                  "date": latest.get("created_at")},
-                "figma", None, url, "done", project=name))
+                "figma", None, base_url, "done", project=name))
     return items, ok_all
 
 
