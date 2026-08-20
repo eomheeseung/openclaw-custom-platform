@@ -503,7 +503,9 @@ FIGMA_API = "https://api.figma.com"
 RE_FIG_AUTONAME = re.compile(
     r"^(frame|group|rectangle|ellipse|vector|line|image|component|instance|slide)\b[\s\d:.-]*$", re.I)
 FIG_PAGE_MAX = 3         # 파일당 보고할 페이지 수 (변경이 많은 순)
-FIG_NAME_MAX = 3         # 한 줄에 나열할 프레임 이름 수
+# 다듬기(LLM)가 묶어서 요약할 재료다 — 3개만 주면 "…시안 제작" 으로 뭉개진다(실측).
+# 12개면 어떤 화면들인지 보이고, 실측 68건 전체를 줘도 5.6초·1원이라 부담 없다.
+FIG_NAME_MAX = 12
 
 
 def _fig_get(token, url, timeout=60):
@@ -628,9 +630,11 @@ def collect_figma(nn, date_from, date_to):
                 head = ", ".join(names[:FIG_NAME_MAX])
                 more = f" 외 {len(names) - FIG_NAME_MAX}건" if len(names) > FIG_NAME_MAX else ""
                 items.append(normalize_item(
-                    {"title": f"{name} · {pg['page']} — {head}{more}",
+                    {"title": f"{name} · {pg['page']} ({len(names)}건) — {head}{more}",
                      "date": latest.get("created_at")},
-                    "figma", None, url, "done", project=name))
+                    "figma", None, url, "done", project=name,
+                    # 전체 이름은 원문으로 보존 — 다듬기가 깨뜨린 글자 복원의 기준이 된다
+                    raw_text=f"{name} · {pg['page']} — " + ", ".join(names)))
         else:
             items.append(normalize_item(
                 {"title": f"{name} 시안 편집" + (f" ({label})" if label else ""),
