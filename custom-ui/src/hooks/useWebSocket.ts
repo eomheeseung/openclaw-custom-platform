@@ -334,8 +334,10 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   handlersRef.current.onChallenge = async (nonce: string) => {
     try {
       const res = await sendRequest('connect', {
+        // 게이트웨이는 자기 PROTOCOL_VERSION 이 이 범위 안에 드는지만 본다.
+        // 4.20=3, 5.28+=4 이므로 범위로 두어 구·신 게이트웨이 양쪽에 붙는다.
         minProtocol: 3,
-        maxProtocol: 3,
+        maxProtocol: 4,
         client: {
           id: 'openclaw-control-ui',
           displayName: 'TideClaw Chat',
