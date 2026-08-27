@@ -216,7 +216,7 @@ const MEMBER_MAP = {
   '김다영': 'da0ab@tideflo.com',
   '차명건': 'blueyooe@tideflo.com',
   '황인영': '0930dlsdud@tideflo.com',
-  '정유진': 'yj08@tideflo.com',
+  '황승현': 'dragonray@tideflo.com',
 };
 
 function resolveEmail(nameOrEmail) {
