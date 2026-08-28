@@ -100,6 +100,7 @@ def apply(draft, edits):
             fixed = _fix_replacement(new, origin)
             fixed = _restore_from(fixed, origin)
             it["text"] = fixed
+            it["polished"] = True          # finish.py 의 미다듬김 게이트가 본다
             if fixed != new:
                 corrected.append({"n": n, "보낸값": new, "저장값": fixed})
         if val.get("status") in STATUS:

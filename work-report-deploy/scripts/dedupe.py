@@ -107,3 +107,39 @@ def compress_minor(items, threshold=3):
         "status": "done", "sources": srcs, "merged_count": len(minor),
     })
     return rest
+
+# 한 산출물의 페이지들이 낱개로 올라온다 — 디자이너 작업이 특히 그렇다.
+# 실측(user15 2026-W35): "03-2 공통 발급 흐름", "06-1 배지 4종_조합배지1",
+# "10 마침 표지" … 같은 폴더의 7건이 각각 한 줄씩 차지했다.
+# 파일명은 어차피 다듬기 대상이므로, 먼저 묶어 다듬을 대상 수를 줄인다.
+RE_PAGE = re.compile(r"^\s*(\d{1,2})(?:-(\d{1,2}))?\s+(.+)$")
+
+
+def compress_page_set(items, threshold=3):
+    """같은 폴더(없으면 공유 드라이브)에서 'NN[-N] 제목' 형식이 threshold 건 이상이면 한 줄로."""
+    out, buckets = [], {}
+    for x in items:
+        m = RE_PAGE.match(x.get("text") or "") if x.get("source") == "drive" else None
+        key = x.get("folder") or x.get("project")
+        if m and key:
+            buckets.setdefault(key, []).append((m, x))
+        else:
+            out.append(x)
+    for key, group in buckets.items():
+        if len(group) < threshold:
+            out += [x for _, x in group]
+            continue
+        group.sort(key=lambda t: (int(t[0].group(1)), int(t[0].group(2) or 0)))
+        titles = [m.group(3) for m, _ in group]
+        srcs = []
+        for _, x in group:
+            srcs += x.get("sources") or [{"source": "drive", "url": x.get("url")}]
+        head = ", ".join(titles[:3]) + (" 외" if len(titles) > 3 else "")
+        out.append({
+            "text": f"{key} {len(group)}건 — {head}",
+            "source": "drive", "url": None, "biz_id": group[0][1].get("biz_id"),
+            "at": max((x.get("at") or "") for _, x in group), "status": "done",
+            "project": group[0][1].get("project"), "folder": key,
+            "sources": srcs, "merged_count": len(group),
+        })
+    return out

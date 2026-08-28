@@ -7,6 +7,7 @@
 """
 import json
 import os
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,7 +17,8 @@ import paths
 import run_log
 from classify import classify
 from collect import collect
-from dedupe import merge_duplicates, compress_minor, compress_doc_set, similarity
+from dedupe import (merge_duplicates, compress_minor, compress_doc_set,
+                    compress_page_set, similarity)
 from week_util import week_label, prev_week_label
 
 CARRY_SIM = 0.6
@@ -28,13 +30,24 @@ def split_common(items, businesses):
             [x for x in items if x.get("biz_id") not in ids])
 
 
-def group_by_business(items, businesses, drop_empty=False):
+def group_by_business(items, businesses, drop_empty=False, nn=None):
     """활동 없는 사업도 남긴다 — 빠뜨림/없음 구분용.
-    단 담당 사업이 많으면(디자이너·팀장급 전 사업 접근) 빈 사업 나열이 노이즈라 drop_empty."""
+    단 담당 사업이 많으면(디자이너·팀장급 전 사업 접근) 빈 사업 나열이 노이즈라 drop_empty.
+
+    ⚠ **주담당(owners) 사업은 비어 있어도 남긴다.** 목록에서 빠지면 화면 드롭다운에도
+    안 나와 공통으로 떨어진 항목을 그 사업으로 옮길 수조차 없다
+    (실측 2026-08-28: user05 는 member 7개라 임계값 6을 한 개 넘겨 ICT인턴십 국내·글로벌이
+     통째로 사라졌고, 관련 항목은 공통에 남아 수동 지정이 불가능했다).
+    """
     groups = [{"id": b["id"], "name": b["name"], "alias": b.get("alias", b["name"]),
-               "items": [x for x in items if x.get("biz_id") == b["id"]]}
+               "items": [x for x in items if x.get("biz_id") == b["id"]],
+               "_owner": bool(nn) and nn in (b.get("owners") or [])}
               for b in businesses]
-    return [g for g in groups if g["items"]] if drop_empty else groups
+    if drop_empty:
+        groups = [g for g in groups if g["items"] or g["_owner"]]
+    for g in groups:
+        g.pop("_owner", None)
+    return groups
 
 
 def drop_unmapped_personal_drive(items):
@@ -93,6 +106,60 @@ def _load_prev_next(nn, date_from):
     return items
 
 
+
+def _item_key(it):
+    """재수집 전후로 같은 항목인지 알아보는 열쇠.
+    n 은 매 수집마다 다시 매겨지므로 쓸 수 없다. url 이 가장 안정적이고,
+    없으면 원문(raw_text) → 문장(text) 순으로 떨어진다."""
+    return (it.get("url") or it.get("raw_text") or it.get("text") or "").strip()
+
+
+def _merge_user_edits(new_draft, old):
+    """사용자가 화면에서 고친 것을 새 수집 결과에 이어붙인다.
+
+    ⚠ 이게 없으면 재수집이 편집본을 통째로 날린다(실측 2026-08-28: 실제로 발생).
+    보존 대상은 사람이 만든 것뿐이다 — 고친 문장·바꾼 상태·다듬기 표시·직접 추가한 항목·삭제.
+    수집으로 새로 들어온 항목은 그대로 살린다(누락이 더 위험하다).
+    """
+    if not old or not old.get("edited_at"):
+        return new_draft, {}
+    old_items, dropped = {}, set(old.get("dropped_keys") or [])
+    for g in (old.get("businesses") or []) + [{"items": old.get("common") or []}]:
+        for it in g.get("items") or []:
+            k = _item_key(it)
+            if k:
+                old_items[k] = it
+
+    stats = {"kept_text": 0, "kept_status": 0, "readded": 0, "redropped": 0}
+    seen = set()
+    for g in new_draft["businesses"] + [{"items": new_draft["common"]}]:
+        keep = []
+        for it in g["items"]:
+            k = _item_key(it)
+            seen.add(k)
+            if k in dropped:                       # 사용자가 지운 항목은 다시 올리지 않는다
+                stats["redropped"] += 1
+                continue
+            o = old_items.get(k)
+            if o:
+                if o.get("text") and o["text"] != it.get("text"):
+                    it["text"] = o["text"]; stats["kept_text"] += 1
+                if o.get("status") and o["status"] != it.get("status"):
+                    it["status"] = o["status"]; stats["kept_status"] += 1
+                if o.get("polished"):
+                    it["polished"] = True
+            keep.append(it)
+        g["items"] = keep
+
+    # 화면에서 직접 추가한 항목(출처 없음)은 수집으로 다시 안 나온다 → 공통에 되살린다
+    for k, o in old_items.items():
+        if k in seen or o.get("sources"):
+            continue
+        new_draft["common"].append({**o, "carry_edit": True})
+        stats["readded"] += 1
+    return new_draft, stats
+
+
 def build(nn, date_from, date_to):
     base = paths.data_dir(nn)
     cfg = json.load(open(f"{base}/work-report/config.json"))
@@ -128,6 +195,7 @@ def build(nn, date_from, date_to):
     items = merge_duplicates(items)
     items = compress_minor(items)
     items = compress_doc_set(items)   # 번호 붙은 제출 서류 묶음 → 한 줄
+    items = compress_page_set(items)  # 같은 폴더의 'NN 제목' 페이지 묶음 → 한 줄
     items = apply_carryover(items, _load_prev_next(nn, date_from))
 
     grouped, common = split_common(items, businesses)
@@ -140,7 +208,8 @@ def build(nn, date_from, date_to):
         "profile": cfg.get("profile") or {}, "recipients": cfg.get("recipients") or {},
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "businesses": group_by_business(grouped, businesses,
-                                        drop_empty=all_access or len(businesses) > 6),
+                                        drop_empty=all_access or len(businesses) > 6,
+                                        nn=nn),
         "common": common, "stats": stats, "failures": failures,
         "warnings": find_unsourced(items),
     }
@@ -159,6 +228,35 @@ def build(nn, date_from, date_to):
     out_dir = f"{base}/work-report/drafts"
     os.makedirs(out_dir, exist_ok=True)
     out = f"{out_dir}/draft-{week}.json"
+
+    # 이전 초안 보존 — 덮어쓰기 전에 반드시 남긴다. 되돌릴 수 없는 손실을 막는 마지막 줄.
+    prev = None
+    if os.path.exists(out):
+        try:
+            prev = json.load(open(out, encoding="utf-8"))
+        except Exception:
+            prev = None
+        hist = f"{out_dir}/history"
+        os.makedirs(hist, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        try:
+            shutil.copy2(out, f"{hist}/draft-{week}.{stamp}.json")
+            for old_f in sorted(os.listdir(hist))[:-20]:      # 최근 20개만 유지
+                os.remove(f"{hist}/{old_f}")
+        except Exception:
+            pass
+    draft, merge_stats = _merge_user_edits(draft, prev)
+    if prev and prev.get("dropped_keys"):
+        draft["dropped_keys"] = prev["dropped_keys"]
+    if merge_stats:
+        draft["merged_edits"] = merge_stats
+        # 번호를 다시 매긴다 — 병합으로 항목이 늘거나 줄었다
+        n = 0
+        for g in draft["businesses"]:
+            for it in g["items"]:
+                n += 1; it["n"] = n
+        for it in draft["common"]:
+            n += 1; it["n"] = n
     json.dump(draft, open(out, "w"), ensure_ascii=False, indent=2)
     run_log.record(nn, ok=True, stats=stats, failures=failures)
     return out, draft

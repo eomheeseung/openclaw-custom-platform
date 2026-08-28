@@ -206,7 +206,12 @@ RE_AD_SUBJECT = re.compile(
     r"이벤트\s*안내|할인|특가|프로모션|초대합니다|신청하세요|마감\s*임박", re.I)
 RE_AD_SENDER = re.compile(
     r"no-?reply|noreply|newsletter|mailer|marketing|ad@|edu@|support@|info@|"
-    r"news@|promo|notification", re.I)
+    r"news@|promo|notification|"
+    # 정기 발행물은 보내는 사람 이름에 "레터/letter" 가 들어간다
+    # (실측: "팀스파르타 HRD레터" — 제목 형식이 매번 달라 제목으로는 못 잡는다)
+    r"레터|letter|"
+    # 서비스 온보딩·추천 메일 (실측: Cosmos welcome@ / discover@)
+    r"welcome@|discover@|digest@", re.I)
 # 타인의 결재/회람 — 내 업무가 아니다 (본인 건은 이름으로 걸러 남긴다)
 RE_APPROVAL = re.compile(r"결재|회람|기안|전자결재|docswave", re.I)
 # 캘린더 잡음 — 장소·상태만 적어둔 일정
@@ -229,12 +234,29 @@ def is_others_approval(subject, member_name):
 MAIL_API = "http://172.18.0.1:18799/api/mail/search"
 MAIL_MAX = 100
 # 사람이 쓴 메일이 아니다 — 시스템 알림·결재 시스템·모니터링
-RE_MAIL_BOT = re.compile(r"dooray!?\s*notification|whatap|docswave|no-?reply@|noreply@", re.I)
+RE_MAIL_BOT = re.compile(
+    r"dooray!?\s*notification|whatap|docswave|no-?reply@|noreply@|do-?not-?reply@|"
+    # 협업 도구의 코멘트·멘션 알림. figma 는 이미 figma 소스로 수집되므로 메일은 중복이다.
+    r"@email\.figma\.com|^comments-|@notifications?\.", re.I)
 # 일정 응답 알림·타인의 주간보고 — 내 업무가 아니다
 RE_MAIL_NOISE = re.compile(
     r"^(업데이트된\s*)?(초대장|초대)\s*:|^(수락함|거절함|미정|취소됨)\s*:|^\[?주간보고\]?[\[\s]")
 # 외부 업체 영업 메일. 사내(@tideflo.com) 발신은 대상에서 뺀다 — 오탐 방지
 RE_MAIL_SALES = re.compile(r"안녕하세요.{0,20}입니다|안내의\s*건|안내\s*드립니다|소개\s*드립니다")
+# 시스템이 뿌리는 알림 메일. **받은 사실 자체는 업무가 아니다** —
+# 실제로 처리했다면 두레이·드라이브·캘린더 쪽에 산출물이 남아 그쪽으로 잡힌다.
+# 실측: "[bidForge] 입찰공고 배정 알림" 이 보고서에 그대로 올라갔다 (2026-W35).
+# 제목이 "…알림" 으로 끝나는 것만 잡는다 — "알림톡 개편 협의" 같은 실제 업무를 안 지우려고.
+RE_MAIL_NOTIFY = re.compile(
+    r"(배정|등록|접수|반려|승인|완료|변경|마감|처리|발송)\s*알림(입니다)?\s*$")
+# 정기 발행물(뉴스레터). 제목이 매번 달라 주제로는 못 거른다 — 발행 형식으로 잡는다.
+# 실측: "… : 08월 27일 ‘출근길’ 루틴" 이 매일 한 건씩 보고서에 올라왔다.
+RE_MAIL_LETTER = re.compile(r"[\'\u2018\u2019]출근길[\'\u2018\u2019]\s*루틴\s*$")
+# 외부 업체의 서비스 공지·안내. 받은 사실은 업무가 아니다.
+# ⚠ 사내(@tideflo.com) 발신에는 적용하지 않는다 — "밀도 서비스 개편 안내" 같은
+#    실제 업무 메일이 지워진다. 호출부에서 발신자를 함께 확인한다.
+RE_MAIL_VENDOR = re.compile(
+    r"(작업|점검|서비스|시스템|정기)\s*(공지|안내)|안내문구\s*변경|변경\s*안내\s*$")
 
 
 def collect_gmail(date_from, date_to, member_name=None):
@@ -261,14 +283,30 @@ def collect_gmail(date_from, date_to, member_name=None):
         sender = m.get("from") or ""
         if not subject:
             continue                       # 제목 없는 초안
-        if RE_MAIL_BOT.search(sender) or is_ad_mail(subject, sender) \
-                or is_others_approval(subject, member_name):
-            continue
+        dbg = os.environ.get("WR_DEBUG_MAIL") == "1"
+        def _drop(rule):
+            if dbg:
+                print(f"  drop[{rule}] {subject}  <- {sender}", file=sys.stderr)
+            return True
+        if RE_MAIL_BOT.search(sender):
+            _drop("bot"); continue
+        if is_ad_mail(subject, sender):
+            _drop("ad"); continue
+        if is_others_approval(subject, member_name):
+            _drop("others-approval"); continue
         head = clean_title(subject)
         if RE_MAIL_NOISE.match(subject) or (RE_MAIL_NOISE.match(head) and member_name not in subject):
-            continue
+            _drop("noise"); continue
         if "tideflo.com" not in sender and RE_MAIL_SALES.search(subject):
-            continue
+            _drop("sales"); continue
+        if RE_MAIL_NOTIFY.search(head) or RE_MAIL_NOTIFY.search(subject):
+            _drop("notify"); continue
+        if RE_MAIL_LETTER.search(head) or RE_MAIL_LETTER.search(subject):
+            _drop("newsletter"); continue
+        if "tideflo.com" not in sender and RE_MAIL_VENDOR.search(subject):
+            _drop("vendor-notice"); continue
+        if dbg:
+            print(f"  keep {head}  <- {sender}", file=sys.stderr)
         url = f"https://mail.google.com/mail/u/0/#all/{m.get('id')}"
         items.append(normalize_item(m, "gmail", None, url, "done"))
     return items, ok
@@ -330,6 +368,21 @@ def clean_filename(name):
     t = re.sub(r"\s*-\s*$", "", t).strip(" -")
     return t or (name or "").strip()
 
+
+# 자동으로 이름이 붙는 캡처·임시 파일. 산출물이 아니라 작업 중 소재다.
+# 실측: "screencapture-web-mildo-us-dodge-shorts-videos-2026-08-27-17 38 59" 이
+# 사업(밀도)에 매핑돼 보고서에 그대로 올라갔다 — drop_unmapped_personal_drive 는
+# 사업이 붙은 파일을 건드리지 않으므로 여기서 막는다.
+RE_DRIVE_SCRATCH = re.compile(
+    # 캡처 도구가 붙이는 이름 — 뒤에 무엇이 오든 캡처다
+    r"^(screen\s*capture|screencapture|screen\s*shot|screenshot|스크린\s*샷|화면\s*캡[처쳐])\b"
+    # 카메라·메신저가 붙이는 이름 — **숫자가 뒤따를 때만**.
+    # (그냥 "이미지 가이드라인" 같은 실제 문서를 지우면 안 된다)
+    r"|^(img|dsc|photo|image|video|movie|kakaotalk|녹음)[\s_-]*\d"
+    # 이름을 안 지은 문서
+    r"|^(무제|untitled|새\s*문서|제목\s*없[는음])"
+    r"(\s*(문서|스프레드시트|프레젠테이션|document|spreadsheet|presentation))?\s*\d*$",
+    re.I)
 
 DRIVE_API = "http://172.18.0.1:18799/api/drive/advanced-search"
 FOLDER_API = "http://172.18.0.1:18799/api/drive/folder-names"
@@ -425,13 +478,18 @@ def collect_drive(nn, date_from, date_to, member_email=None):
         container = drive_names.get(f.get("driveId"))
         # 파일명 정리는 규칙으로 끝낸다 — 모델에 맡기면 한 줄에 3초씩 든다
         title = clean_filename(name)
+        if RE_DRIVE_SCRATCH.match(title) or RE_DRIVE_SCRATCH.match(name or ""):
+            continue                       # 캡처·임시 파일은 산출물이 아니다
         folder = clean_filename(folders.get((f.get("parents") or [None])[0]) or "")
         # 뜻 없는 이름에만 폴더를 붙인다. 폴더 이름이 같으면(오류사항/오류사항) 정보가 없다.
         if folder and RE_GENERIC_DOC.match(title) and folder not in title and title not in folder:
             title = f"{folder} {title}"
         items.append(normalize_item(
             {"title": title, "date": f.get("modifiedTime")}, "drive", None,
-            f.get("webViewLink"), "done", project=container, raw_text=name))
+            f.get("webViewLink"), "done", project=container, raw_text=name,
+            # 폴더명은 파일명만으로는 알 수 없는 "무슨 일인지" 의 유일한 단서다.
+            # 다듬기 단계가 문장을 만들 때 쓰라고 실어 보낸다(예전에는 버렸다).
+            folder=folder or None))
     # 산출물이 많은 주에는 수십 건이 나온다(실측 122건). 최신순으로 잘라 다듬기 부담을 줄이되,
     # **공유 드라이브 파일은 자르지 않는다** — 사업이 특정되는 실제 산출물이라
     # 상한에 밀려 사라지면 보고에서 누락된다. 개인 드라이브만 상한을 적용한다.
@@ -582,6 +640,46 @@ def _fig_diff(old, new):
     return sorted(pages, key=lambda x: -len(x["pairs"]))
 
 
+
+def summarize_frames(names, max_show=4):
+    """프레임 이름 목록 → (화면 목록, 표시 문자열).
+
+    피그마 프레임은 "01 홈 — 진행률 위젯" 처럼 `번호 화면 — 변경내용` 구조가 많다.
+    화면만 뽑아 중복을 없애면 26건이 몇 개 화면으로 줄어 보고서 문장에 가까워진다(실측).
+    - 연속 번호(퀵가이드_1.._8)는 `1~8` 로 접는다 — 한 문서의 페이지들이다
+    - 치수·주석(R34, 480px, 모바일 기준 390px)은 화면이 아니라 뺀다
+    ⚠ 여기서 문장을 만들지는 않는다. 재료만 정리하고 문장은 다듬기 단계 몫이다.
+    """
+    seq_nums, screens = {}, []
+    for raw in names:
+        nm = (raw or "").strip()
+        m = re.match(r"^(.*?)[ _-](\d{1,2})(?:\s+\d+)?$", nm)
+        if m:                                  # 배움이력_..._8 1
+            seq_nums.setdefault(m.group(1).strip(), []).append(int(m.group(2)))
+            continue
+        head = re.split(r"\s—\s", nm, 1)[0]
+        head = re.sub(r"^\d{1,2}(-\d)?\s*", "", head).strip()
+        head = re.sub(r"^[★☆]+", "", head).strip()
+        if not head:
+            continue
+        # 프레임 이름 하나에 치수가 쉼표로 여러 개 들어있기도 하다
+        # (실측: "480px, 모바일 기준 390px" 가 프레임 하나였다) → 조각이 전부 치수면 노이즈
+        DIM = r"[A-Za-z]?\d+(px)?|\d+px|모바일\s*기준\s*\d+px|[Ww]\d+|[Hh]\d+"
+        parts = [q.strip() for q in head.split(",") if q.strip()]
+        if parts and all(re.fullmatch(DIM, q) for q in parts):
+            continue                           # 치수·주석
+        if head not in screens:
+            screens.append(head)
+    for b, nums in seq_nums.items():
+        nums = sorted(set(nums))
+        rng = f"{b} {nums[0]}~{nums[-1]}" if len(nums) > 1 else f"{b} {nums[0]}"
+        if rng not in screens:
+            screens.insert(0, rng)
+    shown = ", ".join(screens[:max_show])
+    more = f" 외 {len(screens) - max_show}개" if len(screens) > max_show else ""
+    return screens, shown + more
+
+
 def collect_figma(nn, date_from, date_to):
     """등록된 파일에서 **본인이 저장한 구간의 변경만** 골라낸다.
 
@@ -681,15 +779,17 @@ def collect_figma(nn, date_from, date_to):
             # "시안 편집" 과 다를 바 없어진다.
             for pg in pages[:FIG_PAGE_MAX]:
                 names = [nm for nm, _ in pg["pairs"]]
-                head = ", ".join(names[:FIG_NAME_MAX])
-                more = f" 외 {len(names) - FIG_NAME_MAX}건" if len(names) > FIG_NAME_MAX else ""
+                screens, shown = summarize_frames(names)
                 # 증적 링크를 첫 변경 프레임으로 바로 건다 — 파일 열고 찾아다닐 필요가 없다
                 nid = pg["pairs"][0][1]
                 url = f"{base_url}?node-id={str(nid).replace(':', '-')}"
                 items.append(normalize_item(
-                    {"title": f"{name} · {pg['page']} ({len(names)}건{shared_note}) — {head}{more}",
+                    {"title": f"{name} · {pg['page']} — {len(names)}개 프레임{shared_note} ({shown})",
                      "date": latest.get("created_at")},
                     "figma", None, url, "done", project=name,
+                    # 다듬기가 문장을 만들 때 쓸 재료. text 만으로는 무슨 화면인지 알 수 없다.
+                    figma_file=name, figma_page=pg["page"],
+                    frame_count=len(names), screens=screens,
                     # 전체 이름은 원문으로 보존 — 다듬기가 깨뜨린 글자 복원의 기준이 된다
                     raw_text=f"{name} · {pg['page']} — " + ", ".join(names)))
         else:
