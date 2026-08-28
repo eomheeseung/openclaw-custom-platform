@@ -218,7 +218,10 @@ function labelSession(nn, sessionKey, label) {
       let f; try { f = JSON.parse(raw.toString()); } catch { return; }
       if (f.type === "event" && f.event === "connect.challenge") {
         req("connect", {
-          minProtocol: 3, maxProtocol: 3,
+          // ⚠ 게이트웨이 PROTOCOL_VERSION 과 맞아야 한다. 2026-08-27 업그레이드로 3→4 가 됐는데
+          //   여기가 3 고정이라 데몬이 붙지 못했다 — `..` 명령이 전부 실패했다(실측 user07·15).
+          //   커스텀 UI 는 그때 고쳤으나 이 데몬을 같이 못 봤다. **범위로 둬서** 구·신 양쪽에 붙는다.
+          minProtocol: 3, maxProtocol: 4,
           client: { id: "openclaw-control-ui", displayName: "TideClaw Dooray", version: "1.0.0", platform: "node", mode: "webchat" },
           scopes: ["operator.admin"], caps: [], auth: { token },
         });
@@ -252,7 +255,10 @@ function sendToSession(nn, message, sessionKey, label) {
       try { f = JSON.parse(raw.toString()); } catch { return; }
       if (f.type === "event" && f.event === "connect.challenge") {
         req("connect", {
-          minProtocol: 3, maxProtocol: 3,
+          // ⚠ 게이트웨이 PROTOCOL_VERSION 과 맞아야 한다. 2026-08-27 업그레이드로 3→4 가 됐는데
+          //   여기가 3 고정이라 데몬이 붙지 못했다 — `..` 명령이 전부 실패했다(실측 user07·15).
+          //   커스텀 UI 는 그때 고쳤으나 이 데몬을 같이 못 봤다. **범위로 둬서** 구·신 양쪽에 붙는다.
+          minProtocol: 3, maxProtocol: 4,
           // client.id 는 게이트웨이가 상수로 검증한다 — 웹 UI 와 같은 값이어야 통과
           client: { id: "openclaw-control-ui", displayName: "TideClaw Dooray", version: "1.0.0", platform: "node", mode: "webchat" },
           scopes: ["operator.admin"], caps: [], auth: { token },
