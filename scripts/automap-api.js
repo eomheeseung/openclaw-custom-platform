@@ -1059,6 +1059,9 @@ const server = http.createServer(async (req, res) => {
       const p = `/opt/openclaw/data/user${nn}/work-report/drafts/draft-${week}.json`;
       const cur = JSON.parse(fs.readFileSync(p, 'utf8'));
       const STATUS = new Set(['done', 'wip', 'next']);
+      const PASSTHRU = ['n', 'source', 'biz_id', 'at', 'url', 'raw_text', 'project',
+                        'folder', 'screens', 'frame_count', 'figma_file', 'figma_page',
+                        'polished'];
       const cleanItem = (it) => ({
         text: String(it?.text || '').trim().slice(0, 300),
         status: STATUS.has(it?.status) ? it.status : 'done',
@@ -1068,6 +1071,12 @@ const server = http.createServer(async (req, res) => {
           : [],
         ...(it?.carry ? { carry: true } : {}),
         ...(it?.merged_count ? { merged_count: it.merged_count } : {}),
+        /* 파이프라인이 만든 메타는 그대로 돌려준다 — 화면이 지어낸 값이 아니라
+           서버가 준 것을 되돌려받는 것이다. 잘라내면 이런 일이 생긴다(실측 2026-08-28):
+             n 이 사라져 polish.py 가 번호로 항목을 못 찾고 finish.py 는 KeyError 로 죽음
+             polished 가 사라져 이미 다듬은 항목이 다시 게이트에 걸림
+             folder·screens·raw_text 가 사라져 다듬기가 쓸 재료를 잃음 */
+        ...PASSTHRU.reduce((o, k) => (it?.[k] === undefined ? o : (o[k] = it[k], o)), {}),
       });
       const cleanItems = (arr) => (Array.isArray(arr) ? arr : []).map(cleanItem).filter(x => x.text);
       if (Array.isArray(body.businesses)) {
