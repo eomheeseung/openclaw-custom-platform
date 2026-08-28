@@ -542,6 +542,20 @@ def _gh(url, token):
         return None
 
 
+def github_accounts(github):
+    """깃헙 계정 목록. 회사·개인 계정을 나눠 쓰는 사람이 있다(실측 2026-08-28).
+
+    예전 형태 — 계정 하나가 최상위에 평평하게 들어 있는 모양 — 을 그대로 받는다.
+    기존 사용자의 integrations.json 을 건드리지 않고 읽히게 하려는 것이다.
+    토큰 없는 항목은 조회가 불가능하므로 뺀다.
+    """
+    g = github or {}
+    accounts = [a for a in (g.get("accounts") or []) if isinstance(a, dict)]
+    if not accounts and (g.get("token") or g.get("owner")):
+        accounts = [g]
+    return [a for a in accounts if a.get("token")]
+
+
 def collect_github(owner, date_from, date_to, token=None, author=None):
     """접근 가능한 레포를 돌며 **모든 브랜치**에서 본인 커밋을 찾는다.
 
@@ -863,9 +877,25 @@ def collect(tools, businesses, date_from, date_to, member_id=None,
     if tool_enabled(tools, "drive"):
         take("drive", *collect_drive(nn, date_from, date_to, member_email))
     if tool_enabled(tools, "github"):
-        g = github or {}
-        take("github", *collect_github(g.get("owner"), date_from, date_to,
-                                       token=g.get("token"), author=g.get("username")))
+        # 계정마다 따로 조회한다. take() 는 stats 를 덮어써서 두 번 부르면 앞 계정이
+        # 통계에서 사라진다 — 캘린더와 같은 방식으로 누적한다.
+        seen_commits = set()
+        for g in github_accounts(github):
+            got, ok = collect_github(g.get("owner"), date_from, date_to,
+                                     token=g.get("token"), author=g.get("username"))
+            # 두 계정이 같은 조직에 속하면 같은 커밋이 두 번 잡힌다 — URL 로 거른다
+            fresh = []
+            for x in got:
+                u = x.get("url")
+                if u and u in seen_commits:
+                    continue
+                if u:
+                    seen_commits.add(u)
+                fresh.append(x)
+            items.extend(fresh)
+            stats["github"] = stats.get("github", 0) + len(fresh)
+            if not ok and "github" not in failures:
+                failures.append("github")
     if tool_enabled(tools, "figma"):
         take("figma", *collect_figma(nn, date_from, date_to))
     return items, stats, failures

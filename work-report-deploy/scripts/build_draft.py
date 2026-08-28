@@ -183,6 +183,9 @@ def build(nn, date_from, date_to):
     gh_integ = integ.get("github") or {}
     for k in ("owner", "repo", "token", "username"):
         gh_cfg.setdefault(k, gh_integ.get(k))
+    # 계정을 2개 이상 쓰는 사람 — 연동 페이지가 accounts 로 저장한다
+    if gh_integ.get("accounts") and not gh_cfg.get("accounts"):
+        gh_cfg["accounts"] = gh_integ["accounts"]
     items, stats, failures = collect(
         cfg.get("tools", []), businesses, date_from, date_to,
         member_id=dooray_member,

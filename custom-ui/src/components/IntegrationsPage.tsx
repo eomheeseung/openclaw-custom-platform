@@ -15,6 +15,7 @@ function expiryFromDays(days: string): string {
 
 export function IntegrationsPage() {
   const [intState, setIntState] = useState<any>({ dooray: null, github: null, loading: true });
+  const [ghAdding, setGhAdding] = useState(false);   // 계정을 하나 더 붙이는 중
   const [doorayToken, setDoorayToken] = useState('');
   /* 봇 URL — 알림이 나가는 주소. 없으면 아침 브리핑도 두레이 수신도 동작하지 않는다 */
   const [botUrl, setBotUrl] = useState('');
@@ -95,16 +96,44 @@ export function IntegrationsPage() {
     } catch (err: any) { alert('오류: ' + err.message); } finally { setSaving(''); }
   };
 
+  /** 이미 연결된 사람이 계정을 하나 더 붙이는 중인지. 회사·개인 계정을 나눠 쓰는 사람이 있다. */
+  const ghAccounts: any[] = intState.github?.accounts?.length
+    ? intState.github.accounts
+    : (intState.github?.token ? [intState.github] : []);
+
   const saveGithub = async () => {
     if (!ghToken.trim()) { alert('토큰을 입력해주세요'); return; }
     setSaving('github');
     try {
       const r = await fetch('/api/integrations/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ github: { owner: ghOwner.trim(), token: ghToken.trim(), repo: ghRepo.trim(), username: ghUsername.trim() }, userNN: getUserNN() }),
+        body: JSON.stringify({ github: ghAdding
+          // 계정 추가: 기존 목록 뒤에 붙인다. 기존 항목의 토큰은 '••••' 로 내려온 값을
+          // 그대로 돌려보내고, 서버가 저장돼 있던 진짜 토큰으로 되살린다.
+          ? { accounts: [...ghAccounts.map((a: any) => ({ owner: a.owner || '', repo: a.repo || '', username: a.username || '', token: a.token })),
+                         { owner: ghOwner.trim(), token: ghToken.trim(), repo: ghRepo.trim(), username: ghUsername.trim() }] }
+          : { owner: ghOwner.trim(), token: ghToken.trim(), repo: ghRepo.trim(), username: ghUsername.trim() },
+          userNN: getUserNN() }),
       });
       const d = await r.json();
-      if (d.ok) { setGhOwner(''); setGhToken(''); setGhRepo(''); await loadInt(); } else alert('저장 실패: ' + (d.error || ''));
+      if (d.ok) { setGhOwner(''); setGhToken(''); setGhRepo(''); setGhUsername(''); setGhAdding(false); await loadInt(); } else alert('저장 실패: ' + (d.error || ''));
+    } catch (err: any) { alert('오류: ' + err.message); } finally { setSaving(''); }
+  };
+
+  /** 계정 하나만 뺀다. 남은 계정의 토큰은 '••••' 로 보내고 서버가 되살린다. */
+  const removeGhAccount = async (idx: number) => {
+    const target = ghAccounts[idx];
+    if (!confirm(`${target?.username || target?.owner || '이 계정'} 연동을 삭제할까요?`)) return;
+    setSaving('github');
+    try {
+      const rest = ghAccounts.filter((_: any, i: number) => i !== idx)
+        .map((a: any) => ({ owner: a.owner || '', repo: a.repo || '', username: a.username || '', token: a.token }));
+      const r = await fetch('/api/integrations/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ github: { accounts: rest }, userNN: getUserNN() }),
+      });
+      const d = await r.json();
+      if (d.ok) await loadInt(); else alert('삭제 실패: ' + (d.error || ''));
     } catch (err: any) { alert('오류: ' + err.message); } finally { setSaving(''); }
   };
 
@@ -114,7 +143,7 @@ export function IntegrationsPage() {
     try {
       const r = await fetch('/api/integrations/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ github: { owner: '', token: '', repo: '', username: '', updatedAt: '' }, userNN: getUserNN() }),
+        body: JSON.stringify({ github: { owner: '', token: '', repo: '', username: '', accounts: [], updatedAt: '' }, userNN: getUserNN() }),
       });
       const d = await r.json();
       if (d.ok) await loadInt(); else alert('실패: ' + (d.error || ''));
@@ -314,29 +343,47 @@ export function IntegrationsPage() {
               )}
             </div>
 
-            {isGithubConnected ? (
+            {isGithubConnected && !ghAdding ? (
               <div>
-                <div className="bg-background rounded-lg p-4 mb-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-secondary">토큰</span>
-                    <span className="text-xs font-mono text-text-secondary">{intState.github.token}</span>
+                {/* 계정을 2개 이상 쓰는 사람이 있다 — 회사·개인을 나눠 쓰는 경우.
+                    커밋은 계정마다 조회해 하나의 주간보고로 합친다. */}
+                {ghAccounts.map((a: any, i: number) => (
+                  <div key={i} className="bg-background rounded-lg p-4 mb-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-text-primary">
+                        {a.username || a.owner || `계정 ${i + 1}`}
+                      </span>
+                      {ghAccounts.length > 1 && (
+                        <button className="text-[11px] text-red-500 hover:underline"
+                          disabled={saving === 'github'} onClick={() => removeGhAccount(i)}>삭제</button>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-text-secondary">토큰</span>
+                      <span className="text-xs font-mono text-text-secondary">{a.token}</span>
+                    </div>
+                    {a.owner && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-text-secondary">Owner</span>
+                        <span className="text-xs text-text-secondary">{a.owner}</span>
+                      </div>
+                    )}
                   </div>
-                  {intState.github.owner && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-text-secondary">Owner</span>
-                      <span className="text-xs text-text-secondary">{intState.github.owner}</span>
-                    </div>
-                  )}
-                  {intState.github.updatedAt && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-text-secondary">연동일시</span>
-                      <span className="text-xs text-text-secondary">{new Date(intState.github.updatedAt).toLocaleString('ko-KR')}</span>
-                    </div>
-                  )}
+                ))}
+                {intState.github.updatedAt && (
+                  <p className="text-[11px] text-text-secondary mb-3">
+                    최근 수정 {new Date(intState.github.updatedAt).toLocaleString('ko-KR')}
+                  </p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border-color text-text-secondary hover:border-accent hover:text-accent transition-colors"
+                    onClick={() => { setGhOwner(''); setGhToken(''); setGhRepo(''); setGhUsername(''); setGhAdding(true); }}>
+                    + 계정 추가
+                  </button>
+                  <button className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors" disabled={saving === 'github-del'} onClick={deleteGithub}>
+                    {saving === 'github-del' ? '해제 중...' : '연동 해제'}
+                  </button>
                 </div>
-                <button className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors" disabled={saving === 'github-del'} onClick={deleteGithub}>
-                  {saving === 'github-del' ? '해제 중...' : '연동 해제'}
-                </button>
               </div>
             ) : (
               <div>
@@ -362,9 +409,15 @@ export function IntegrationsPage() {
                     <input type="text" value={ghRepo} onChange={(e) => setGhRepo(e.target.value)} placeholder="특정 저장소만 보고 싶을 때만 입력"
                       className="w-full px-3 py-2 bg-background border border-border-color rounded-lg text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:ring-1 focus:ring-accent" />
                   </div>
-                  <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors" disabled={saving === 'github'} onClick={saveGithub}>
-                    {saving === 'github' ? '저장 중...' : '연결'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors" disabled={saving === 'github'} onClick={saveGithub}>
+                      {saving === 'github' ? '저장 중...' : (ghAdding ? '계정 추가' : '연결')}
+                    </button>
+                    {ghAdding && (
+                      <button className="px-3 py-2 text-sm text-text-secondary hover:text-text-primary transition-colors"
+                        onClick={() => setGhAdding(false)}>취소</button>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-4 p-3 bg-background rounded-lg">
                   <p className="text-xs font-medium text-text-secondary mb-2">토큰 발급 방법</p>

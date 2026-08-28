@@ -4404,7 +4404,30 @@ const server = http.createServer(async (req, res) => {
           } catch (e) { console.warn('[dooray] memberId fetch failed:', e.message); }
         }
       }
-      if (data.github) existing.github = { ...existing.github, ...data.github, updatedAt: new Date().toISOString() };
+      if (data.github) {
+        // 화면은 토큰을 '••••1234' 로 받아 그대로 돌려보낸다. 그걸 저장하면 **진짜 토큰이 지워진다**.
+        // 마스킹된 값이 오면 저장돼 있던 토큰을 그대로 둔다.
+        const masked = (t) => typeof t === 'string' && t.startsWith('••••');
+        // 이미 저장돼 있는 토큰을 username 으로 찾을 수 있게 모아둔다.
+        // 계정 하나만 쓰던 사람이 두 번째를 추가하면 첫 계정은 최상위에 있으므로 함께 넣는다.
+        const known = new Map();
+        if (existing.github?.token) known.set(existing.github.username || '', existing.github.token);
+        (Array.isArray(existing.github?.accounts) ? existing.github.accounts : [])
+          .forEach((a) => { if (a?.token) known.set(a.username || '', a.token); });
+        const resolve = (a) => (masked(a?.token) ? { ...a, token: known.get(a.username || '') || '' } : a);
+
+        const next = resolve({ ...existing.github, ...data.github });
+        if (Array.isArray(data.github.accounts)) {
+          // 토큰을 되살리지 못한 계정은 조회가 불가능하므로 저장하지 않는다
+          next.accounts = data.github.accounts.map(resolve).filter((a) => a.token);
+          // 최상위를 첫 계정과 맞춘다. 안 맞추면 **지운 계정의 토큰이 최상위에 남는다** —
+          // 수집은 accounts 를 보므로 동작엔 지장이 없지만, 쓰지 않는 자격증명이 파일에 남는다.
+          const head = next.accounts[0] || {};
+          next.owner = head.owner || ''; next.repo = head.repo || '';
+          next.username = head.username || ''; next.token = head.token || '';
+        }
+        existing.github = { ...next, updatedAt: new Date().toISOString() };
+      }
       if (data.figma) {
         existing.figma = { ...existing.figma, ...data.figma, updatedAt: new Date().toISOString() };
         // 토큰을 새로 넣으면 본인 식별 정보를 함께 저장한다 — 버전 이력에서 내 편집만 골라내는 데 쓴다
@@ -4455,7 +4478,19 @@ const server = http.createServer(async (req, res) => {
       try { data = JSON.parse(fs.readFileSync(intFile, 'utf-8')); } catch {}
       const safe = {};
       if (data.dooray) safe.dooray = { token: data.dooray.token ? '••••' + data.dooray.token.slice(-4) : '', memberId: data.dooray.memberId || '', memberName: data.dooray.memberName || '', botUrl: data.dooray.botUrl || '', updatedAt: data.dooray.updatedAt || '' };
-      if (data.github) safe.github = { owner: data.github.owner || '', repo: data.github.repo || '', token: data.github.token ? '••••' + data.github.token.slice(-4) : '', updatedAt: data.github.updatedAt || '' };
+      // 계정을 2개 이상 쓰는 사람이 있다 — accounts 로 함께 내려준다.
+      // username 도 내려야 한다: 커밋 조회가 author=username 으로 걸러지는데
+      // 예전에는 빠져 있어서 화면에서 무슨 계정인지 알 수 없었다.
+      if (data.github) {
+        const maskGh = (g) => ({
+          owner: g.owner || '', repo: g.repo || '', username: g.username || '',
+          token: g.token ? '••••' + g.token.slice(-4) : '',
+        });
+        safe.github = { ...maskGh(data.github), updatedAt: data.github.updatedAt || '' };
+        if (Array.isArray(data.github.accounts) && data.github.accounts.length) {
+          safe.github.accounts = data.github.accounts.map(maskGh);
+        }
+      }
       if (data.figma) safe.figma = { token: data.figma.token ? '••••' + data.figma.token.slice(-4) : '', handle: data.figma.handle || '', expiresAt: data.figma.expiresAt || '', fileKeys: data.figma.fileKeys || [], updatedAt: data.figma.updatedAt || '' };
       jsonRes(res, 200, { ok: true, data: safe });
     } catch (err) {
