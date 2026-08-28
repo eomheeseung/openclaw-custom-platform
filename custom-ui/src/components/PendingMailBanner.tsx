@@ -152,7 +152,8 @@ export function PendingMailBanner({ token }: Props) {
   const showToast = (msg: string) => {
     setToast(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2000);
+    // 2초는 눈에 안 들어온다(실측 피드백) — 발송처럼 되돌릴 수 없는 동작은 길게 남긴다.
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 6000);
   };
 
   const fetchPending = useCallback(async () => {
@@ -238,6 +239,11 @@ export function PendingMailBanner({ token }: Props) {
       setItems(prev => prev.filter(x => x.mailId !== item.mailId));
       setSending(s => ({ ...s, [item.mailId]: null }));
       showToast('메일이 발송되었습니다');
+      /* 토스트는 사라진다 — 대화에도 남겨 "보냈는지" 를 나중에 확인할 수 있게 한다.
+         배너는 대화 상태를 모르므로 이벤트로 알리고 useWebSocket 이 메시지를 넣는다. */
+      window.dispatchEvent(new CustomEvent('tideclaw:mail-sent', {
+        detail: { subject: d.subject, to: d.to, cc: d.cc },
+      }));
       fetchRecipients();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -21,6 +21,7 @@ export interface WorkDraft {
   failures?: string[]; warnings?: Item[];
 }
 
+const SRC_MAX = 3;   // 한 줄에 그릴 출처 링크 최대 개수
 const TOOL_KO: Record<string, string> = {
   dooray: '두레이', gmail: 'Gmail', calendar: '캘린더',
   drive: '드라이브', github: 'GitHub', figma: 'Figma', carry: '이월',
@@ -85,7 +86,7 @@ function Row({
 
   return (
     <div className={`group flex items-baseline gap-2 px-5 py-1.5 text-sm ${warn ? 'bg-amber-500/[0.06]' : ''}`}>
-      <span className="flex-1 leading-snug">
+      <span className="flex-1 min-w-0 leading-snug break-words">
         {alias && <span className="text-accent/70 text-[11px] font-bold mr-1">[{alias}]</span>}
         {editable
           ? <span onClick={() => setEditing(true)}
@@ -122,14 +123,22 @@ function Row({
         </span>
       )}
 
+      {/* 묶음 항목은 출처가 7~9개까지 붙는다(실측). 전부 그리면 가로로 밀려
+          제목 칸이 한 글자 폭까지 찌그러진다 — 앞 3개만 보여주고 나머지는 개수로. */}
       <span className="text-[10.5px] whitespace-nowrap flex-shrink-0">
-        {(it.sources || []).map((s, i) => (
+        {(it.sources || []).slice(0, SRC_MAX).map((s, i) => (
           s.url
             ? <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
                  className="text-accent/60 hover:text-accent ml-1 border-b border-dotted border-accent/30">
                 {TOOL_KO[s.source] || s.source} ↗</a>
             : <span key={i} className="text-text-secondary/70 ml-1">{TOOL_KO[s.source] || s.source}</span>
         ))}
+        {(it.sources || []).length > SRC_MAX && (
+          <span className="text-text-secondary/60 ml-1"
+                title={`출처 ${(it.sources || []).length}건`}>
+            외 {(it.sources || []).length - SRC_MAX}
+          </span>
+        )}
         {unsourced && (
           warn
             ? <span className="text-amber-700 font-bold ml-1">⚠ 출처 없음</span>

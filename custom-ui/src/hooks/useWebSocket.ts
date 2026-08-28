@@ -1016,13 +1016,20 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
           let hadDraftCard = false;
           const historyMessages = ((payload?.messages || []) as Array<{
             role: string;
-            content: Array<{ type: string; text?: string }> | string;
+            content: Array<{ type: string; text?: string; content?: string }> | string;
             timestamp?: number;
           }>).map((m, idx) => {
             let text = '';
             if (typeof m.content === 'string') text = m.content;
             else if (Array.isArray(m.content)) text = m.content.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
-            if (text.includes('```work-draft')) hadDraftCard = true;
+            /* 카드 감지는 toolResult 블록까지 본다 — 게이트웨이가 도구 출력을 type:'text' 가
+               아니라 type:'toolResult' 블록의 content 로 준다. text 만 보면 초안 카드가 있던
+               자리를 놓쳐 아래 복구 fetch 가 돌지 않는다(실측 2026-08-27: 카드가 안 그려짐).
+               표시용 text 는 일부러 건드리지 않는다 — 도구 출력 원문이 화면에 쏟아진다. */
+            const blockText = Array.isArray(m.content)
+              ? m.content.map(b => b.text || b.content || '').join('')
+              : text;
+            if (text.includes('```work-draft') || blockText.includes('```work-draft')) hadDraftCard = true;
             return {
               id: `hist-${idx}`,
               role: m.role as 'user' | 'assistant' | 'system',
@@ -1117,6 +1124,32 @@ export function useWebSocket({ url, token }: UseWebSocketProps): UseWebSocketRet
   const isLoading = isSending || messages.some(m => m.isLoading);
 
   const loadSessionHistory = switchSession;
+
+  /* 메일 발송 완료를 대화에도 남긴다.
+     발송 배너는 토스트만 띄우고 사라져서 "보낸 건지" 를 나중에 알 수 없었다(실측 피드백).
+     배너는 대화 상태를 모르므로 window 이벤트로 알려 오고, 여기서 메시지로 붙인다. */
+  useEffect(() => {
+    const onMailSent = (e: Event) => {
+      const d = ((e as CustomEvent).detail || {}) as { subject?: string; to?: unknown; cc?: unknown };
+      const join = (v: unknown) => Array.isArray(v) ? v.join(', ') : (typeof v === 'string' ? v : '');
+      const to = join(d.to);
+      const cc = join(d.cc);
+      const lines = [
+        '📧 메일을 발송했습니다.',
+        `· 제목: ${d.subject || '(제목 없음)'}`,
+        to ? `· 받는 사람: ${to}` : '',
+        cc ? `· 참조: ${cc}` : '',
+      ].filter(Boolean);
+      setMessages(prev => [...prev, {
+        id: `mail-sent-${Date.now()}`,
+        role: 'assistant' as const,
+        content: lines.join('\n'),
+        timestamp: new Date(),
+      }]);
+    };
+    window.addEventListener('tideclaw:mail-sent', onMailSent);
+    return () => window.removeEventListener('tideclaw:mail-sent', onMailSent);
+  }, []);
 
   // Connect on mount, reconnect only when url/token actually change
   useEffect(() => {
