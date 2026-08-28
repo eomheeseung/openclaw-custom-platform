@@ -37,6 +37,10 @@ COMMON_VOCAB = [
     '진행사항', '예정사항', '참고사항', '주간보고', '작업항목', '주요과업',
     '진행중', '완료', '종료', '해결됨', '신규', '대기', '분류됨', '작업완료',
     '이번주', '다음주', '지난주', '이번주차', '다음주차',
+    # ⚠ 아래는 '교정 대상' 이 아니라 '건드리지 말 것' 목록이다.
+    # vocab 에 있는 단어는 _correct_word 가 그대로 돌려준다.
+    # 없으면 '주차'→'이번주차', '주간보고서'→'주간보고' 로 멀쩡한 말이 망가진다(실측).
+    '주차', '주간보고서', '보고서', '주간',
     '홈페이지', '유지보수', '개선', '주식회사', '타이드플로', '수행사',
 ]
 
@@ -305,9 +309,10 @@ def cmd_build(project_id, draft_path):
         business = draft.get('business_name') or meta.get('name', project_id)
         output_filename = f'[{business}] {fn_label}.hwpx'
 
-    # 파일명도 어휘 사전으로 최종 교정 (원본 filename 은 meta 기준이라 대체로 정상 · safety net)
-    vocab = _extract_vocab_from_meta(meta)
-    output_filename = correct_text(output_filename, vocab)
+    # ⚠ 파일명에는 교정을 돌리지 않는다.
+    # 파일명은 템플릿 원본(사람이 지은 이름) + 계산된 주차 숫자로 조립된다 — 모델이
+    # 만든 문장이 아니라 교정할 대상이 아니다. 돌렸더니 오히려 망가졌다(실측 2026-08-28:
+    # "8월 4주차 주간보고서" → "8월 4이번주차 주간보고" 로 몇 주째 잘못 생성되고 있었다).
 
     out_dir = os.path.join(OUTPUT_ROOT, project_id)
     os.makedirs(out_dir, exist_ok=True)
