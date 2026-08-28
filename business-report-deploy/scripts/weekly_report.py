@@ -120,9 +120,26 @@ def _correct_word(word, vocab, max_ratio=0.5):
     return best if best is not None else word
 
 
+def _corrector_enabled():
+    """오탈자 교정을 켤지. **moonshot(Kimi) 계열을 쓸 때만 켠다.**
+
+    이 교정기는 Kimi 가 한글을 손상시키는 문제(아카데미→아침미) 때문에 만든 것이다.
+    쓰는 모델이 그렇지 않으면 막을 대상이 없고, 멀쩡한 단어만 어휘로 끌어당긴다
+    (실측 2026-08-28: "8월 4주차 주간보고서" → "8월 4이번주차 주간보고").
+    2026-08-28 현재 전원 openai/gpt-5.6-luna → 꺼짐. moonshot 으로 되돌리면 자동으로 켜진다.
+    """
+    try:
+        cfg = json.load(open('/home/node/.openclaw/openclaw.json', encoding='utf-8'))
+    except Exception:
+        return True          # 판단이 안 되면 예전대로 (보수적)
+    m = ((cfg.get('agents') or {}).get('defaults') or {}).get('model') or {}
+    names = [m.get('primary') or '', m.get('fast') or ''] + list(m.get('fallbacks') or [])
+    return any('moonshot' in str(x) for x in names)
+
+
 def correct_text(text, vocab):
     """텍스트 안의 한글 단어들 교정. 다른 문자·공백·조사 등은 그대로 유지."""
-    if not text or not vocab:
+    if not text or not vocab or not _corrector_enabled():
         return text
     def repl(m):
         return _correct_word(m.group(0), vocab)
