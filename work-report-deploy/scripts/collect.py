@@ -381,8 +381,37 @@ RE_DRIVE_SCRATCH = re.compile(
     r"|^(img|dsc|photo|image|video|movie|kakaotalk|녹음)[\s_-]*\d"
     # 이름을 안 지은 문서
     r"|^(무제|untitled|새\s*문서|제목\s*없[는음])"
-    r"(\s*(문서|스프레드시트|프레젠테이션|document|spreadsheet|presentation))?\s*\d*$",
+    r"(\s*(문서|스프레드시트|프레젠테이션|document|spreadsheet|presentation))?\s*\d*$"
+    # 변환 도구가 흘린 찌꺼기 — "tmp convert 1787817844585" (실측 user05)
+    r"|^tmp[\s_-]*convert[\s_-]*\d+$",
     re.I)
+
+# 버리려고 모아둔 폴더 — 여기 있는 파일은 이번 주 실적이 아니다.
+# 실측(2026-08-28 user05): "사용안함/붙임2.OOO 이력서", "to delete/chk, chk2, page-2",
+# "old/26년 04월 월간보고서" 가 8월 주간보고에 실적으로 올라왔다.
+#
+# ⚠ 부분일치로 잡으면 안 된다. 전에 `다운로드|녹화` 를 부분일치로 걸었다가
+#   "다운로드 기능 개선 명세서" 라는 **정상 문서**가 지워질 뻔했다(테스트에서 발견).
+#   그래서 폴더 이름 **전체**가 목록과 같을 때만 뺀다. 앞머리 번호("18. ")만 떼고 비교한다.
+# ⚠ '작성중'·'진행중' 은 일부러 넣지 않는다 — 작성 중인 문서도 그 주에 한 일이다.
+# ⚠ '테스트'·'test' 도 넣지 않는다 — QA 담당자에게는 그게 본업이다.
+JUNK_FOLDERS = {
+    "사용안함", "미사용", "안씀", "쓰지않음", "사용안함폴더",
+    "삭제", "삭제예정", "삭제요망", "폐기", "폐기예정",
+    "휴지통", "trash", "bin", "todelete", "delete", "deleted",
+    "tmp", "temp", "임시", "임시파일", "임시자료",
+    "old", "구버전", "이전버전", "예전자료", "backup", "백업",
+}
+RE_FOLDER_NUM = re.compile(r"^\s*\d{1,2}[.\-)]?\s*")
+
+
+def is_junk_folder(folder):
+    """폴더 이름 전체가 '버리는 폴더' 일 때만 True. 부분일치 금지."""
+    if not folder:
+        return False
+    k = RE_FOLDER_NUM.sub("", str(folder)).strip().lower()
+    k = re.sub(r"[\s_\-.]+", "", k)
+    return k in JUNK_FOLDERS
 
 DRIVE_API = "http://172.18.0.1:18799/api/drive/advanced-search"
 FOLDER_API = "http://172.18.0.1:18799/api/drive/folder-names"
@@ -481,6 +510,8 @@ def collect_drive(nn, date_from, date_to, member_email=None):
         if RE_DRIVE_SCRATCH.match(title) or RE_DRIVE_SCRATCH.match(name or ""):
             continue                       # 캡처·임시 파일은 산출물이 아니다
         folder = clean_filename(folders.get((f.get("parents") or [None])[0]) or "")
+        if is_junk_folder(folder):
+            continue                       # 버리려고 모아둔 폴더 — 산출물이 아니다
         # 뜻 없는 이름에만 폴더를 붙인다. 폴더 이름이 같으면(오류사항/오류사항) 정보가 없다.
         if folder and RE_GENERIC_DOC.match(title) and folder not in title and title not in folder:
             title = f"{folder} {title}"

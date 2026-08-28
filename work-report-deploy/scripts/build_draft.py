@@ -18,7 +18,7 @@ import run_log
 from classify import classify
 from collect import collect
 from dedupe import (merge_duplicates, compress_minor, compress_doc_set,
-                    compress_page_set, similarity)
+                    compress_page_set, compress_folder_set, similarity)
 from week_util import week_label, prev_week_label
 
 CARRY_SIM = 0.6
@@ -196,6 +196,7 @@ def build(nn, date_from, date_to):
     items = compress_minor(items)
     items = compress_doc_set(items)   # 번호 붙은 제출 서류 묶음 → 한 줄
     items = compress_page_set(items)  # 같은 폴더의 'NN 제목' 페이지 묶음 → 한 줄
+    items = compress_folder_set(items)  # 같은 폴더 3건 이상 → 한 줄 (번호 없어도)
     items = apply_carryover(items, _load_prev_next(nn, date_from))
 
     grouped, common = split_common(items, businesses)

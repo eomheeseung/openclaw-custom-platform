@@ -143,3 +143,43 @@ def compress_page_set(items, threshold=3):
             "sources": srcs, "merged_count": len(group),
         })
     return out
+
+
+def compress_folder_set(items, threshold=3):
+    """같은 폴더에서 나온 드라이브 파일이 threshold 건 이상이면 한 줄로 묶는다.
+
+    compress_page_set 은 'NN 제목' 처럼 **번호가 붙은** 페이지 묶음만 잡는다(디자이너 케이스).
+    실측(2026-08-28): user05 는 폴더를 잘 나눠 쓰지만 파일명에 번호가 없어 한 건도 안 묶여
+    드라이브만 87줄이었다. user06 은 '5.최종 산출물' 18건이 18줄을 차지했다.
+    적용 후 user05 87→59, user06 60→43.
+
+    ⚠ 사업(biz_id)·상태(status)가 다르면 묶지 않는다. 섞어 묶으면 그 줄이 어느 사업
+      항목인지 정할 수 없고, '완료' 와 '차주 예정' 이 한 줄에 붙는다.
+    ⚠ 묶인 줄은 merged_count 가 붙어 다듬기 게이트에 걸린다(finish.py). 파일명 나열이
+      그대로 보고서에 실리지 않게 하려는 것이므로 의도된 동작이다.
+    """
+    out, buckets = [], {}
+    for x in items:
+        folder = x.get("folder")
+        if x.get("source") == "drive" and folder:
+            buckets.setdefault((folder, x.get("biz_id"), x.get("status")), []).append(x)
+        else:
+            out.append(x)
+    for (folder, biz_id, status), group in buckets.items():
+        if len(group) < threshold:
+            out += group
+            continue
+        group.sort(key=lambda x: x.get("at") or "", reverse=True)
+        titles = [x.get("text") or "" for x in group]
+        srcs = []
+        for x in group:
+            srcs += x.get("sources") or [{"source": "drive", "url": x.get("url")}]
+        head = ", ".join(titles[:3]) + (" 외" if len(titles) > 3 else "")
+        out.append({
+            "text": f"{folder} {len(group)}건 — {head}",
+            "source": "drive", "url": None, "biz_id": biz_id,
+            "at": max((x.get("at") or "") for x in group), "status": status,
+            "project": group[0].get("project"), "folder": folder,
+            "sources": srcs, "merged_count": len(group),
+        })
+    return out
