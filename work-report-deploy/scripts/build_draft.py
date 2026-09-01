@@ -215,6 +215,12 @@ def build(nn, date_from, date_to):
                                         drop_empty=all_access or len(businesses) > 6,
                                         nn=nn),
         "common": common, "stats": stats, "failures": failures,
+        # 드롭다운용 사업 후보 — **초안에 싣는 사업과는 별개다.**
+        # businesses 에는 활동이 있는 사업만 담는다(전 사업 접근자는 22개가 다 실리면 노이즈).
+        # 그런데 화면 드롭다운이 businesses 를 그대로 쓰다 보니, 이번 주에 활동이 안 잡힌
+        # 사업으로는 항목을 옮길 수조차 없었다(실측 2026-09-01 user12: 22개 중 9개만 선택 가능).
+        "biz_options": [{"id": b["id"], "name": b["name"], "alias": b.get("alias", b["name"])}
+                        for b in businesses],
         "warnings": find_unsourced(items),
     }
     # 항목마다 번호를 박아둔다 — 다듬기 때 모델이 파일 전체(9KB)를 다시 쓰지 않고

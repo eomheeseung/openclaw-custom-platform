@@ -1081,10 +1081,31 @@ const server = http.createServer(async (req, res) => {
       const cleanItems = (arr) => (Array.isArray(arr) ? arr : []).map(cleanItem).filter(x => x.text);
       if (Array.isArray(body.businesses)) {
         const byId = new Map(body.businesses.map(b => [String(b.id), b]));
-        // 사업 목록 자체는 서버 것을 쓴다 (화면에서 사업을 새로 만들 수는 없다)
+        const known = new Set((cur.businesses || []).map(b => String(b.id)));
         cur.businesses = (cur.businesses || []).map(b => ({
           ...b, items: cleanItems(byId.get(String(b.id))?.items),
         }));
+        // 초안에 없던 사업으로 옮긴 항목은 그룹을 새로 만들어 받는다.
+        // 예전에는 서버 목록만 썼기 때문에 **옮긴 항목이 저장에서 통째로 사라졌다.**
+        // 단 사업을 화면에서 창작할 수는 없다 — biz_options(서버가 정한 후보)에 있는 것만 허용.
+        const opts = new Map((cur.biz_options || []).map(o => [String(o.id), o]));
+        for (const b of body.businesses) {
+          const id = String(b?.id);
+          if (!id || known.has(id)) continue;
+          const items = cleanItems(b.items);
+          const opt = opts.get(id);
+          if (!opt) {
+            // 알 수 없는 사업. 그냥 건너뛰면 **그 안의 항목이 조용히 사라진다**
+            // (요청 본문에서는 원래 사업에서 이미 빠져 있기 때문. 실측으로 1건 유실 확인).
+            if (items.length) {
+              jsonRes(res, 400, { ok: false, error: `알 수 없는 사업(${id})으로 옮기려 해 저장하지 않았습니다` });
+              return;
+            }
+            continue;
+          }
+          if (!items.length) continue;          // 빈 그룹은 만들지 않는다
+          cur.businesses.push({ id: opt.id, name: opt.name, alias: opt.alias, items });
+        }
       }
       if (Array.isArray(body.common)) cur.common = cleanItems(body.common);
       if (Array.isArray(body.ai)) cur.ai = cleanItems(body.ai);

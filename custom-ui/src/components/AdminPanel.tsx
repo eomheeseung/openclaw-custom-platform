@@ -836,7 +836,9 @@ export function AdminPanel() {
           <div className="bg-card border border-border-color rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-text-primary flex items-center gap-2">
-                <Settings className="w-4 h-4" /> Moonshot 멀티키 ({moonshotKeys?.mode === 'round-robin' ? 'Round-Robin' : 'Single'})
+                {/* 키가 1개면 '멀티키' 라는 말 자체가 틀리다. 개수를 그대로 보여준다. */}
+                <Settings className="w-4 h-4" /> Moonshot API 키
+                {moonshotKeys ? ` (${moonshotKeys.count}개${moonshotKeys.count > 1 ? ' · Round-Robin' : ''})` : ''}
               </h3>
               <button onClick={fetchMoonshotKeys} disabled={moonshotKeysLoading}
                 className="text-xs px-2 py-1 rounded border border-border-color hover:bg-background transition-colors disabled:opacity-50">

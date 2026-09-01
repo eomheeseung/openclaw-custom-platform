@@ -19,7 +19,11 @@ export interface WorkDraft {
   period: string; week?: string; generated_at?: string;
   businesses: BizGroup[]; common: Item[]; ai?: Item[];
   failures?: string[]; warnings?: Item[];
+  /* 드롭다운 후보 — businesses 에 없는 사업으로도 옮길 수 있게 서버가 내려준다 */
+  biz_options?: Array<{ id: string; name: string; alias: string }>;
 }
+
+type BizOpt = { alias: string; gi: number; id?: string };
 
 const SRC_MAX = 3;   // 한 줄에 그릴 출처 링크 최대 개수
 const TOOL_KO: Record<string, string> = {
@@ -45,11 +49,11 @@ function Row({
   it, alias, refr, editable, bizList, onEdit, onRemove, onStatus, onBiz,
 }: {
   it: Item; alias?: string; refr: Ref; editable: boolean;
-  bizList: Array<{ alias: string; gi: number }>;
+  bizList: BizOpt[];
   onEdit: (r: Ref, text: string) => void;
   onRemove: (r: Ref) => void;
   onStatus: (r: Ref, status: string) => void;
-  onBiz: (r: Ref, gi: number) => void;
+  onBiz: (r: Ref, t: BizOpt) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(it.text);
@@ -101,12 +105,13 @@ function Row({
         <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
           {refr.gi !== AI && (
             <>
-              <select value={refr.gi} onChange={e => onBiz(refr, Number(e.target.value))}
+              <select value={bizList.findIndex(b => b.gi === refr.gi)}
+                onChange={e => onBiz(refr, bizList[Number(e.target.value)])}
                 className="text-xs bg-white border border-border-color rounded px-1.5 py-1 text-text-secondary
                            hover:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 title="사업 바꾸기">
                 <option value={COMMON}>(사업 없음)</option>
-                {bizList.map(b => <option key={b.gi} value={b.gi}>{b.alias}</option>)}
+                {bizList.map((b, i) => <option key={`${b.gi}:${b.id ?? i}`} value={i}>{b.alias}</option>)}
               </select>
               <button onClick={() => onStatus(refr, it.status === 'done' ? 'next' : 'done')}
                 className="text-xs px-2 py-1 border border-border-color rounded text-text-secondary
@@ -245,7 +250,15 @@ export const WorkDraftCard = memo(function WorkDraftCard({
   const onEdit = (r: Ref, text: string) => mutate(cur => { listOf(cur, r.gi)[r.ii].text = text; return cur; });
   const onRemove = (r: Ref) => mutate(cur => { listOf(cur, r.gi).splice(r.ii, 1); return cur; });
   const onStatus = (r: Ref, status: string) => mutate(cur => { listOf(cur, r.gi)[r.ii].status = status; return cur; });
-  const onBiz = (r: Ref, gi: number) => mutate(cur => {
+  const onBiz = (r: Ref, t: BizOpt) => mutate(cur => {
+    let gi = t.gi;
+    if (gi < 0) {
+      // 초안에 아직 없는 사업 — 후보 목록에서 찾아 그룹을 만든다.
+      const opt = (cur.biz_options || []).find((o: { id: string }) => String(o.id) === String(t.id));
+      if (!opt) return cur;
+      cur.businesses.push({ id: opt.id, name: opt.name, alias: opt.alias, items: [] });
+      gi = cur.businesses.length - 1;
+    }
     if (gi === r.gi) return cur;
     const [moved] = listOf(cur, r.gi).splice(r.ii, 1);
     listOf(cur, gi).push(moved);
@@ -267,7 +280,16 @@ export const WorkDraftCard = memo(function WorkDraftCard({
   const warnCount = done.concat(next).filter(r => !r.it.carry && !(r.it.sources || []).length).length;
   const fails = d.failures || [];
   const emptyBiz = d.businesses.filter(b => b.items.length === 0);
-  const bizList = d.businesses.map((b, gi) => ({ alias: b.alias, gi }));
+  /* 드롭다운은 초안에 실린 사업(gi)뿐 아니라 **아직 항목이 없는 후보 사업**도 보여준다.
+     전 사업 접근자는 활동 있는 사업만 초안에 실려서, 이번 주 수집이 놓친 일을 옮길 곳이
+     목록에 아예 없었다(실측 2026-09-01 user12: 22개 중 9개만 선택 가능).
+     후보는 gi:-1 로 두고, 실제로 옮기는 순간 그룹을 만든다. */
+  const bizList: BizOpt[] = [
+    ...d.businesses.map((b, gi) => ({ alias: b.alias, gi, id: b.id })),
+    ...((d.biz_options || []) as Array<{ id: string; alias: string }>)
+      .filter(o => !d.businesses.some(b => String(b.id) === String(o.id)))
+      .map(o => ({ alias: o.alias, gi: -1, id: o.id })),
+  ];
   const rowProps = { editable, bizList, onEdit, onRemove, onStatus, onBiz };
 
   return (
